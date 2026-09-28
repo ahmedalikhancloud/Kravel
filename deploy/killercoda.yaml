@@ -61,6 +61,17 @@ spec:
         app.kubernetes.io/name: kravel
     spec:
       serviceAccountName: kravel
+      # bootstrap.sh imports the locally built image into the control-plane
+      # node's containerd store. Keep this Pod on that same node.
+      nodeSelector:
+        kubernetes.io/hostname: controlplane
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

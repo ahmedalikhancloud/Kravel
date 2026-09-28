@@ -47,6 +47,8 @@ Kravel must collect the healthy baseline **before** the breaking script runs. Yo
 
 The bootstrap builds the repository's Dockerfile, imports the image into the playground's `k8s.io` containerd namespace, and deploys it with `imagePullPolicy: Never`. This means no registry is required for the initial demo.
 
+In Killercoda's two-node playground, the locally imported image exists only on `controlplane`. The demo manifest pins Kravel to that node and tolerates its control-plane taint; the intentionally broken sample workload may run on either node.
+
 If you publish an image later, skip the local build:
 
 ```bash
@@ -97,6 +99,17 @@ bash demo/killercoda/reset.sh
 ```
 
 The reset script removes only `kravel-demo`, `kravel-system`, their demo ClusterRole/ClusterRoleBinding, and the local timestamp file.
+
+## Troubleshooting
+
+If an older checkout reports `ErrImageNeverPull` on `node01`, update it and rerun bootstrap from the beginning:
+
+```bash
+git pull --ff-only
+bash demo/killercoda/bootstrap.sh
+```
+
+Bootstrap deletes and recreates only the disposable Kravel demo namespaces, so rerunning it after this startup failure is expected.
 
 ## Scope of this fast demo
 
