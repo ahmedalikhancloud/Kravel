@@ -2,7 +2,7 @@
 
 This optional demo compares Kravel's existing Groq tool-calling investigator with a Laya System-1 classifier over the same incident window. Prometheus and Grafana show aggregate timing signals; MLflow groups each pair as one comparison with two child runs.
 
-Laya is deliberately outside Killercoda. Loading its model alongside Kubernetes, Prometheus, Grafana, and MLflow risks exhausting a small playground. The free Colab launcher uses one English checkpoint and gives the playground a temporary, authenticated HTTPS endpoint.
+Laya is deliberately outside Killercoda. Loading its model alongside Kubernetes, Prometheus, Grafana, and MLflow risks exhausting a small playground. The launcher uses one English checkpoint in a GitHub Codespace and gives the playground a temporary, authenticated HTTPS endpoint.
 
 ## What is and is not comparable
 
@@ -28,13 +28,19 @@ bash demo/killercoda/observability-up.sh
 
 The last command prints temporary browser links for Grafana and MLflow. Killercoda traffic links are anonymous and effectively public to anyone who has the unguessable URL. Use only the synthetic demo.
 
-## 2. Start the free Laya side
+## 2. Start the free-allowance Laya side
 
-[Open the Laya launcher directly in Google Colab](https://colab.research.google.com/github/ahmedalikhancloud/Kravel/blob/main/demo/colab/laya_server.ipynb), then run both code cells. The first execution downloads the checkpoint and can take several minutes. The second cell prints a temporary HTTPS URL and bearer token. The notebook source is also available at [`demo/colab/laya_server.ipynb`](../demo/colab/laya_server.ipynb) for inspection before execution.
+On the [Kravel repository](https://github.com/ahmedalikhancloud/Kravel), select **Code → Codespaces → Create codespace on main**. A personal GitHub account includes a monthly Codespaces quota; it is limited rather than an unlimited hosting plan. In the Codespace terminal, run:
 
-Keep the Colab runtime open. Do not save the cell output, paste either value into chat, commit it, add it to a Kubernetes Secret, or put it in Grafana or MLflow.
+```bash
+bash demo/codespaces/laya-server.sh
+```
 
-The notebook downloads Cloudflare's quick-tunnel binary at runtime. The tunnel is public but requires the randomly generated Laya bearer token for inference. It ends with the Colab runtime and is appropriate only for synthetic demonstration data.
+The first execution installs pinned Laya `0.3.20`, downloads the English checkpoint, and can take several minutes. The script generates a bearer token at runtime and attempts to make port `8000` public. If it cannot change the visibility automatically, open the Codespace **PORTS** tab, right-click port `8000`, and set **Port Visibility → Public**. It then prints the temporary HTTPS URL and token.
+
+Keep the Codespace running during the comparison. Do not save the terminal output, paste either value into chat, commit it, add it to a Kubernetes Secret, or put it in Grafana or MLflow. A public Codespaces port is reachable by anyone who knows its URL, but inference still requires the random bearer token. Use only synthetic demonstration data.
+
+GitHub documents both the [personal-account included quota](https://docs.github.com/en/codespaces/troubleshooting/troubleshooting-included-usage) and [public port behavior](https://docs.github.com/en/codespaces/reference/security-in-github-codespaces). When the demo is finished, run `bash demo/codespaces/laya-server.sh stop`, then stop or delete the Codespace to conserve included usage.
 
 ## 3. Run the measured comparison
 
@@ -74,4 +80,4 @@ Cold Laya startup is not measured because the health-checked server is started b
 
 ## Failure isolation
 
-If Colab sleeps or its tunnel expires, the Laya child run is marked `unavailable`; Groq, Kravel, Prometheus, Grafana, and MLflow continue. If MLflow is unavailable, comparison records still go to Kravel's SQLite store and Prometheus. The observability deployment uses short retention, resource limits, one replica per component, and `emptyDir` storage.
+If the Codespace stops or its forwarded port becomes private, the Laya child run is marked `unavailable`; Groq, Kravel, Prometheus, Grafana, and MLflow continue. If MLflow is unavailable, comparison records still go to Kravel's SQLite store and Prometheus. The observability deployment uses short retention, resource limits, one replica per component, and `emptyDir` storage.

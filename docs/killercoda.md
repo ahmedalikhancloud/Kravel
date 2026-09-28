@@ -96,7 +96,7 @@ bash demo/killercoda/observability-up.sh
 bash demo/killercoda/compare-flows.sh
 ```
 
-Start the temporary Laya endpoint with the linked Colab notebook before running the comparison. All credentials and the generated endpoint URL are supplied at runtime and excluded from repository files and telemetry.
+Start the temporary Laya endpoint in the linked GitHub Codespace before running the comparison. All credentials and the generated endpoint URL are supplied at runtime and excluded from repository files and telemetry.
 
 ## What the failure does
 

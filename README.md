@@ -136,7 +136,7 @@ If `KRAVEL_API_TOKEN` is set, all `/v1/*` calls require `Authorization: Bearer <
 
 For the quickest end-to-end demonstration, use the browser-based [Killercoda walkthrough](docs/killercoda.md). It builds this repository inside a disposable Kubernetes playground and can run either a focused ConfigMap failure or a four-incident production-style sequence covering a crash loop, silent Service selector drift, a bad image rollout, and failed scheduling—no local cluster or registry required.
 
-The optional [flow-comparison walkthrough](docs/observability-comparison.md) adds browser-accessible dashboards and compares the hosted Groq agent with a Laya System-1 classifier running in a separate free Colab session.
+The optional [flow-comparison walkthrough](docs/observability-comparison.md) adds browser-accessible dashboards and compares the hosted Groq agent with a Laya System-1 classifier running in a separate GitHub Codespace.
 
 1. Build and publish the image, then replace `ghcr.io/YOUR_ORG/kravel:0.1.0` in [`deploy/kubernetes.yaml`](deploy/kubernetes.yaml).
 2. Review the ClusterRole. The default manifest intentionally does not grant access to Secret objects.
