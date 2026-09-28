@@ -1,4 +1,5 @@
 import { executeTemporalTool, temporalTools } from "./mcp.mjs";
+import { performance } from "node:perf_hooks";
 
 const DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
 const DEFAULT_MODEL = "openai/gpt-oss-20b";
@@ -53,6 +54,7 @@ async function completion({ baseUrl, apiKey, body, fetchImpl, retries = 2 }) {
   const url = endpoint(baseUrl);
   for (let attempt = 0; ; attempt += 1) {
     let response;
+    const started = performance.now();
     try {
       response = await fetchImpl(url, {
         method: "POST",
@@ -76,7 +78,7 @@ async function completion({ baseUrl, apiKey, body, fetchImpl, retries = 2 }) {
       const payload = await response.json();
       const message = payload.choices?.[0]?.message;
       if (!message) throw new Error("LLM response did not contain choices[0].message");
-      return message;
+      return { message, elapsedMs: performance.now() - started, usage: payload.usage ?? {} };
     }
 
     if (attempt < retries && (response.status === 429 || response.status >= 500)) {
@@ -197,8 +199,11 @@ export async function runTemporalAgent({
   ];
 
   let toolCallsExecuted = 0;
+  let modelMs = 0;
+  let toolMs = 0;
+  const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   for (let turn = 0; turn < turnLimit; turn += 1) {
-    const message = await completion({
+    const completed = await completion({
       baseUrl,
       apiKey,
       fetchImpl,
@@ -211,6 +216,11 @@ export async function runTemporalAgent({
         max_completion_tokens: 1_200
       }
     });
+    const message = completed.message;
+    modelMs += completed.elapsedMs;
+    usage.promptTokens += Number(completed.usage.prompt_tokens) || 0;
+    usage.completionTokens += Number(completed.usage.completion_tokens) || 0;
+    usage.totalTokens += Number(completed.usage.total_tokens) || 0;
     const calls = (message.tool_calls ?? []).slice(0, 4);
     messages.push(assistantMessage({ ...message, tool_calls: calls }));
 
@@ -218,13 +228,14 @@ export async function runTemporalAgent({
       const answer = textContent(message.content);
       if (!toolCallsExecuted) throw new Error("The model returned an answer without inspecting temporal evidence");
       if (!answer) throw new Error("The model returned neither tool calls nor a final answer");
-      return { answer, model, turns: turn + 1, toolCalls: toolCallsExecuted };
+      return { answer, model, turns: turn + 1, toolCalls: toolCallsExecuted, modelMs, toolMs, usage };
     }
 
     for (const call of calls) {
       const name = call.function?.name ?? "";
       let result;
       let args = {};
+      const toolStarted = performance.now();
       try {
         args = JSON.parse(call.function?.arguments || "{}");
         if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("tool arguments must be a JSON object");
@@ -233,6 +244,8 @@ export async function runTemporalAgent({
         result = await executeTemporalTool({ name, args, store, config, embeddingClient });
       } catch (error) {
         result = { error: error.message, tool: name };
+      } finally {
+        toolMs += performance.now() - toolStarted;
       }
       toolCallsExecuted += 1;
       messages.push({
@@ -244,7 +257,7 @@ export async function runTemporalAgent({
     }
   }
 
-  const finalMessage = await completion({
+  const finalCompletion = await completion({
     baseUrl,
     apiKey,
     fetchImpl,
@@ -260,9 +273,14 @@ export async function runTemporalAgent({
       max_completion_tokens: 1_200
     }
   });
+  const finalMessage = finalCompletion.message;
+  modelMs += finalCompletion.elapsedMs;
+  usage.promptTokens += Number(finalCompletion.usage.prompt_tokens) || 0;
+  usage.completionTokens += Number(finalCompletion.usage.completion_tokens) || 0;
+  usage.totalTokens += Number(finalCompletion.usage.total_tokens) || 0;
   const answer = textContent(finalMessage.content);
   if (!answer) throw new Error("The model did not return a final answer after the tool-turn limit");
-  return { answer, model, turns: turnLimit + 1, toolCalls: toolCallsExecuted };
+  return { answer, model, turns: turnLimit + 1, toolCalls: toolCallsExecuted, modelMs, toolMs, usage };
 }
 
 export const agentDefaults = {

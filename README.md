@@ -13,6 +13,7 @@ Kravel is a time-travel memory service for Kubernetes agents. It records object 
 - Optional OpenAI-compatible embeddings for evidence ranking. Embeddings never determine reconstructed state.
 - A dependency-free HTTP API and MCP stdio server.
 - A dependency-free hosted-LLM harness with bounded local tool execution (Groq by default).
+- A measured Groq-versus-Laya comparison path with Prometheus, Grafana, and optional MLflow experiment logging.
 - An in-cluster list/watch collector with `resourceVersion`, bookmarks, reconnects, and `410 Gone` recovery.
 - Secret `data` / `stringData` redaction and removal of `managedFields` before persistence.
 
@@ -123,6 +124,7 @@ Any compatible Chat Completions endpoint with function calling can be selected w
 | `GET` | `/v1/state/graph` | Reconstruct state plus resource relationships |
 | `GET` | `/v1/state/trace` | Trace neighbors around `resourceKey` |
 | `GET` | `/v1/context` | Build incident evidence around `incidentAt` |
+| `GET` | `/metrics` | Prometheus metrics for recorded flow comparisons |
 | `POST` | `/v1/admin/prune` | Apply configured retention |
 | `GET` | `/healthz`, `/readyz` | Health and storage counts |
 
@@ -133,6 +135,8 @@ If `KRAVEL_API_TOKEN` is set, all `/v1/*` calls require `Authorization: Bearer <
 ## Run in Kubernetes
 
 For the quickest end-to-end demonstration, use the browser-based [Killercoda walkthrough](docs/killercoda.md). It builds this repository inside a disposable Kubernetes playground and can run either a focused ConfigMap failure or a four-incident production-style sequence covering a crash loop, silent Service selector drift, a bad image rollout, and failed scheduling—no local cluster or registry required.
+
+The optional [flow-comparison walkthrough](docs/observability-comparison.md) adds browser-accessible dashboards and compares the hosted Groq agent with a Laya System-1 classifier running in a separate free Colab session.
 
 1. Build and publish the image, then replace `ghcr.io/YOUR_ORG/kravel:0.1.0` in [`deploy/kubernetes.yaml`](deploy/kubernetes.yaml).
 2. Review the ClusterRole. The default manifest intentionally does not grant access to Secret objects.
@@ -166,6 +170,8 @@ The deployment uses one replica because the MVP uses SQLite. A persistent volume
 | `KRAVEL_LLM_MODEL` | `openai/gpt-oss-20b` | Tool-capable hosted model |
 | `KRAVEL_LLM_API_KEY` / `GROQ_API_KEY` | empty | Hosted model credential |
 | `KRAVEL_LLM_MAX_TURNS` | `6` | Maximum tool-calling turns, capped at 10 |
+
+The comparison CLI accepts the Laya URL and both runtime credentials over standard input. They are intentionally not part of persistent configuration.
 
 ## Important limits
 

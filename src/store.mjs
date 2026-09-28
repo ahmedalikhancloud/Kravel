@@ -151,6 +151,29 @@ export class TemporalStore {
         UNIQUE(cluster_id, metric_name, sampled_at, labels_json)
       );
       CREATE INDEX IF NOT EXISTS idx_metrics_time ON metric_samples(cluster_id, sampled_at);
+
+      CREATE TABLE IF NOT EXISTS benchmark_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        comparison_id TEXT NOT NULL,
+        cluster_id TEXT NOT NULL,
+        scenario TEXT NOT NULL DEFAULT '',
+        flow TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT NOT NULL,
+        total_ms REAL,
+        evidence_ms REAL,
+        model_ms REAL,
+        tool_ms REAL,
+        tool_calls INTEGER NOT NULL DEFAULT 0,
+        confidence REAL,
+        diagnosis_json TEXT NOT NULL DEFAULT '{}',
+        error_code TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS idx_benchmark_time ON benchmark_runs(cluster_id, finished_at);
+      CREATE INDEX IF NOT EXISTS idx_benchmark_flow ON benchmark_runs(cluster_id, flow, finished_at);
     `);
   }
 
@@ -299,6 +322,82 @@ export class TemporalStore {
       VALUES (?, ?, ?, ?, ?)
     `).run(clusterId, metricName, toIso(sampledAt, "sampledAt"), numeric, stableStringify(labels));
     return { inserted: result.changes > 0 };
+  }
+
+  recordBenchmarkRun({
+    comparisonId,
+    clusterId,
+    scenario = "",
+    flow,
+    provider,
+    model,
+    status,
+    startedAt,
+    finishedAt,
+    totalMs = null,
+    evidenceMs = null,
+    modelMs = null,
+    toolMs = null,
+    toolCalls = 0,
+    confidence = null,
+    diagnosis = {},
+    errorCode = ""
+  }) {
+    if (!comparisonId || !clusterId || !flow || !provider || !model) {
+      throw new Error("comparisonId, clusterId, flow, provider, and model are required");
+    }
+    if (!["success", "failed", "unavailable"].includes(status)) throw new Error("invalid benchmark status");
+    const finiteOrNull = (value) => value === null || value === undefined || !Number.isFinite(Number(value))
+      ? null
+      : Number(value);
+    const safeDiagnosis = Object.fromEntries(
+      Object.entries(diagnosis ?? {})
+        .filter(([key, value]) => /^[a-z][a-z0-9_]{0,63}$/.test(key) && Number.isFinite(Number(value)))
+        .map(([key, value]) => [key, Math.min(Math.max(Number(value), 0), 1)])
+    );
+    const result = this.db.prepare(`
+      INSERT INTO benchmark_runs (
+        comparison_id, cluster_id, scenario, flow, provider, model, status,
+        started_at, finished_at, total_ms, evidence_ms, model_ms, tool_ms,
+        tool_calls, confidence, diagnosis_json, error_code
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      String(comparisonId), String(clusterId), String(scenario), String(flow), String(provider), String(model), status,
+      toIso(startedAt, "benchmark startedAt"), toIso(finishedAt, "benchmark finishedAt"),
+      finiteOrNull(totalMs), finiteOrNull(evidenceMs), finiteOrNull(modelMs), finiteOrNull(toolMs),
+      Math.max(0, Number.parseInt(toolCalls, 10) || 0), finiteOrNull(confidence),
+      stableStringify(safeDiagnosis), String(errorCode).replace(/[^a-z0-9_-]/gi, "_").slice(0, 64)
+    );
+    return { id: Number(result.lastInsertRowid), comparisonId: String(comparisonId) };
+  }
+
+  benchmarkRuns({ clusterId, limit = 1000 } = {}) {
+    if (!clusterId) throw new Error("clusterId is required");
+    return this.db.prepare(`
+      SELECT comparison_id, cluster_id, scenario, flow, provider, model, status,
+        started_at, finished_at, total_ms, evidence_ms, model_ms, tool_ms,
+        tool_calls, confidence, diagnosis_json, error_code
+      FROM benchmark_runs WHERE cluster_id = ?
+      ORDER BY finished_at DESC, id DESC LIMIT ?
+    `).all(clusterId, Math.min(Math.max(Number(limit) || 1000, 1), 10_000)).map((row) => ({
+      comparisonId: row.comparison_id,
+      clusterId: row.cluster_id,
+      scenario: row.scenario,
+      flow: row.flow,
+      provider: row.provider,
+      model: row.model,
+      status: row.status,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      totalMs: row.total_ms,
+      evidenceMs: row.evidence_ms,
+      modelMs: row.model_ms,
+      toolMs: row.tool_ms,
+      toolCalls: row.tool_calls,
+      confidence: row.confidence,
+      diagnosis: parseJson(row.diagnosis_json, {}),
+      errorCode: row.error_code
+    }));
   }
 
   attachEmbedding(changeId, embedding) {
@@ -451,7 +550,7 @@ export class TemporalStore {
 
   prune(retentionDays) {
     const cutoff = subtractSeconds(new Date().toISOString(), retentionDays * 86400);
-    const tables = [["changes", "event_at"], ["audit_events", "event_at"], ["k8s_events", "event_at"], ["metric_samples", "sampled_at"]];
+    const tables = [["changes", "event_at"], ["audit_events", "event_at"], ["k8s_events", "event_at"], ["metric_samples", "sampled_at"], ["benchmark_runs", "finished_at"]];
     const deleted = {};
     for (const [table, column] of tables) {
       deleted[table] = this.db.prepare(`DELETE FROM ${table} WHERE ${column} < ?`).run(cutoff).changes;
@@ -465,7 +564,8 @@ export class TemporalStore {
       changes: count("changes"),
       auditEvents: count("audit_events"),
       kubernetesEvents: count("k8s_events"),
-      metricSamples: count("metric_samples")
+      metricSamples: count("metric_samples"),
+      benchmarkRuns: count("benchmark_runs")
     };
   }
 }

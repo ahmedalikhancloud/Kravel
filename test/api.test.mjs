@@ -15,6 +15,30 @@ test("HTTP API ingests and rewinds a resource", async (context) => {
   });
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
+  store.recordBenchmarkRun({
+    comparisonId: "comparison-1",
+    clusterId: "api-test",
+    scenario: "synthetic",
+    flow: "laya_classifier",
+    provider: "laya",
+    model: "english",
+    status: "success",
+    startedAt: "2026-09-28T12:00:00Z",
+    finishedAt: "2026-09-28T12:00:01Z",
+    totalMs: 125,
+    evidenceMs: 5,
+    modelMs: 120,
+    confidence: 0.91,
+    diagnosis: { config_regression: 0.94 }
+  });
+
+  const metrics = await fetch(`${baseUrl}/metrics`);
+  assert.equal(metrics.status, 200);
+  const metricText = await metrics.text();
+  assert.match(metricText, /kravel_benchmark_latency_seconds\{flow="laya_classifier",phase="end_to_end"\} 0\.125/);
+  assert.match(metricText, /kravel_benchmark_latency_distribution_seconds_bucket\{flow="laya_classifier",phase="end_to_end",le="0\.25"\} 1/);
+  assert.match(metricText, /diagnosis="config_regression"\} 0\.94/);
+
   const unauthorized = await fetch(`${baseUrl}/v1/state/rewind?timestamp=2026-09-28T12:01:00Z`);
   assert.equal(unauthorized.status, 401);
 

@@ -1,0 +1,375 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kravel-observability
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kravel-prometheus-config
+  namespace: kravel-observability
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 2s
+      evaluation_interval: 2s
+    scrape_configs:
+      - job_name: kravel
+        static_configs:
+          - targets: ["kravel.kravel-system.svc.cluster.local:8080"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kravel-prometheus
+  namespace: kravel-observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kravel-prometheus
+  template:
+    metadata:
+      labels:
+        app: kravel-prometheus
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.13.3
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=1h
+            - --storage.tsdb.retention.size=128MB
+            - --web.enable-lifecycle
+          ports:
+            - name: http
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: kravel-prometheus-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kravel-prometheus
+  namespace: kravel-observability
+spec:
+  selector:
+    app: kravel-prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kravel-grafana-provisioning
+  namespace: kravel-observability
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://kravel-prometheus:9090
+        isDefault: true
+        editable: false
+  dashboard-provider.yaml: |
+    apiVersion: 1
+    providers:
+      - name: Kravel
+        orgId: 1
+        folder: Kravel
+        type: file
+        disableDeletion: true
+        editable: false
+        options:
+          path: /var/lib/grafana/dashboards
+  dashboard.json: |
+    {
+      "annotations": {"list": []},
+      "editable": false,
+      "graphTooltip": 1,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Groq agent — latest end-to-end",
+          "id": 1,
+          "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"expr": "kravel_benchmark_latency_seconds{flow=\"groq_agent\",phase=\"end_to_end\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
+        },
+        {
+          "type": "stat",
+          "title": "Laya classifier — latest end-to-end",
+          "id": 2,
+          "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"expr": "kravel_benchmark_latency_seconds{flow=\"laya_classifier\",phase=\"end_to_end\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
+        },
+        {
+          "type": "stat",
+          "title": "Groq tool calls",
+          "id": 3,
+          "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"expr": "kravel_benchmark_tool_calls{flow=\"groq_agent\"}", "refId": "A"}],
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
+        },
+        {
+          "type": "stat",
+          "title": "Recorded successful runs",
+          "id": 4,
+          "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"expr": "sum(kravel_benchmark_runs_total{status=\"success\"})", "refId": "A"}],
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
+        },
+        {
+          "type": "timeseries",
+          "title": "Flow latency by phase",
+          "id": 5,
+          "gridPos": {"h": 9, "w": 14, "x": 0, "y": 5},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"expr": "kravel_benchmark_latency_seconds", "legendFormat": "{{flow}} / {{phase}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []}
+        },
+        {
+          "type": "bargauge",
+          "title": "Latest Laya diagnosis probabilities",
+          "id": 6,
+          "gridPos": {"h": 9, "w": 10, "x": 14, "y": 5},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"expr": "kravel_benchmark_diagnosis_probability{flow=\"laya_classifier\"}", "legendFormat": "{{diagnosis}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"min": 0, "max": 1, "unit": "percentunit"}, "overrides": []},
+          "options": {"displayMode": "gradient", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
+        },
+        {
+          "type": "timeseries",
+          "title": "Aggregate p95 end-to-end latency",
+          "id": 7,
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"expr": "histogram_quantile(0.95, sum by (flow, le) (kravel_benchmark_latency_distribution_seconds_bucket{phase=\"end_to_end\"}))", "legendFormat": "{{flow}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []}
+        }
+      ],
+      "refresh": "2s",
+      "schemaVersion": 41,
+      "tags": ["kravel", "benchmark"],
+      "templating": {"list": []},
+      "time": {"from": "now-15m", "to": "now"},
+      "timezone": "browser",
+      "title": "Kravel Flow Comparison",
+      "uid": "kravel-flow-comparison",
+      "version": 1
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kravel-grafana
+  namespace: kravel-observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kravel-grafana
+  template:
+    metadata:
+      labels:
+        app: kravel-grafana
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        runAsGroup: 472
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:13.1.6
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Viewer
+            - name: GF_AUTH_BASIC_ENABLED
+              value: "false"
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
+              value: /var/lib/grafana/dashboards/dashboard.json
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/datasources/datasource.yaml
+              subPath: datasource.yaml
+              readOnly: true
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/dashboards/dashboard-provider.yaml
+              subPath: dashboard-provider.yaml
+              readOnly: true
+            - name: dashboard
+              mountPath: /var/lib/grafana/dashboards
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/grafana
+      volumes:
+        - name: provisioning
+          configMap:
+            name: kravel-grafana-provisioning
+        - name: dashboard
+          configMap:
+            name: kravel-grafana-provisioning
+            items:
+              - key: dashboard.json
+                path: dashboard.json
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kravel-grafana
+  namespace: kravel-observability
+spec:
+  selector:
+    app: kravel-grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kravel-mlflow
+  namespace: kravel-observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kravel-mlflow
+  template:
+    metadata:
+      labels:
+        app: kravel-mlflow
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: mlflow
+          image: ghcr.io/mlflow/mlflow:v3.14.0
+          command: ["mlflow"]
+          args:
+            - server
+            - --host
+            - 0.0.0.0
+            - --port
+            - "5000"
+            - --backend-store-uri
+            - sqlite:////mlflow/mlflow.db
+            - --default-artifact-root
+            - /mlflow/artifacts
+            - --allowed-hosts
+            - "*"
+          ports:
+            - name: http
+              containerPort: 5000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /mlflow
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kravel-mlflow
+  namespace: kravel-observability
+spec:
+  selector:
+    app: kravel-mlflow
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http

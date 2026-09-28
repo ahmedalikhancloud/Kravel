@@ -1,11 +1,21 @@
 import crypto from "node:crypto";
 import http from "node:http";
+import { prometheusMetrics } from "./metrics.mjs";
 import { parseDurationSeconds } from "./time.mjs";
 
 function send(response, status, payload) {
   const body = JSON.stringify(payload, null, 2);
   response.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
+    "content-length": Buffer.byteLength(body),
+    "cache-control": "no-store"
+  });
+  response.end(body);
+}
+
+function sendText(response, status, body, contentType) {
+  response.writeHead(status, {
+    "content-type": contentType,
     "content-length": Buffer.byteLength(body),
     "cache-control": "no-store"
   });
@@ -59,6 +69,9 @@ export function createApiServer({ store, config, embeddingClient }) {
     try {
       if (url.pathname === "/healthz") return send(response, 200, { status: "ok" });
       if (url.pathname === "/readyz") return send(response, 200, { status: "ready", store: store.stats() });
+      if (request.method === "GET" && url.pathname === "/metrics") {
+        return sendText(response, 200, prometheusMetrics(store, config.clusterId), "text/plain; version=0.0.4; charset=utf-8");
+      }
       if (!authorized(request, config.apiToken)) return send(response, 401, { error: "unauthorized" });
 
       if (request.method === "POST" && url.pathname === "/v1/ingest/resource") {

@@ -87,6 +87,17 @@ unset GROQ_API_KEY
 
 The agent prompt explicitly asks it to find every independent failure, including the Service failure that has no Warning Event. Rerun `bootstrap.sh` before switching between the single-incident and multi-incident scenarios; bootstrap resets only the disposable demo namespaces and the in-memory timeline.
 
+## Compare Groq and Laya with dashboards
+
+The optional [observability comparison](observability-comparison.md) adds a resource-capped Prometheus, pre-provisioned Grafana dashboard, and MLflow tracking UI. It compares the Groq tool-calling investigation with an external Laya System-1 classifier while keeping the Laya model out of the memory-constrained playground.
+
+```bash
+bash demo/killercoda/observability-up.sh
+bash demo/killercoda/compare-flows.sh
+```
+
+Start the temporary Laya endpoint with the linked Colab notebook before running the comparison. All credentials and the generated endpoint URL are supplied at runtime and excluded from repository files and telemetry.
+
 ## What the failure does
 
 Only the `kravel-demo` namespace is changed:
@@ -130,7 +141,7 @@ bash demo/killercoda/agent-investigate.sh
 bash demo/killercoda/reset.sh
 ```
 
-The reset script removes only `kravel-demo`, `kravel-system`, their demo ClusterRole/ClusterRoleBinding, and the local timestamp file.
+The reset script removes only `kravel-demo`, `kravel-system`, `kravel-observability`, the demo ClusterRole/ClusterRoleBinding, its verified port-forward processes, and local timestamp/PID files.
 
 ## Troubleshooting
 
@@ -145,7 +156,7 @@ Bootstrap deletes and recreates only the disposable Kravel demo namespaces, so r
 
 ## Scope of this fast demo
 
-The playground path demonstrates Kubernetes watches, state reconstruction, topology, Kubernetes Events, and an optional external LLM tool loop. It deliberately does not reconfigure the playground API server for audit webhooks or install Prometheus; those are separate integration demos. `investigate.sh` is the deterministic no-key report, while `agent-investigate.sh` makes the hosted model call.
+The base playground path demonstrates Kubernetes watches, state reconstruction, topology, Kubernetes Events, and an optional external LLM tool loop. It deliberately does not reconfigure the playground API server for audit webhooks. Prometheus, Grafana, and MLflow are installed only when you run the optional comparison demo. `investigate.sh` is the deterministic no-key report, while `agent-investigate.sh` makes the hosted model call.
 
 Only use the hosted-agent path with synthetic or approved data. The model provider receives the evidence returned by its selected tools. Kravel redacts Kubernetes Secret values, but ConfigMaps, object names, labels, annotations, event messages, and other metadata may still be sensitive.
 

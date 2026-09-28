@@ -23,6 +23,7 @@ Kravel collects operational history that can contain sensitive metadata. Treat i
 - Treat Kubernetes fields as attacker-controlled prompt input. The harness instructs the model not to follow embedded instructions, caps tool output, and exposes no mutation tools, but model behavior is not a security boundary.
 - The hosted-agent caller fixes the cluster and namespace scope. Those fields are not shown to the model, model-supplied overrides are discarded, and out-of-scope resource keys are rejected.
 - Supply model credentials at runtime. The Killercoda helper streams the key through `kubectl exec` standard input and does not persist it in the Pod; production deployments should use an approved secret manager and egress policy.
+- The comparison helper streams the Groq key, Laya token, and temporary Laya URL over standard input. Benchmark storage and MLflow intentionally exclude credentials, endpoint URLs, evidence, prompts, and generated answers.
 - Use HTTPS for remote model endpoints. The harness rejects plain HTTP except for loopback development endpoints.
 - Rotate `KRAVEL_API_TOKEN`; do not put it directly in a checked-in manifest.
 - Define deletion, retention, and legal-hold behavior before collecting regulated workloads.
