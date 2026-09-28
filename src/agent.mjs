@@ -97,15 +97,29 @@ function openAiTools() {
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: tool.inputSchema
+      parameters: {
+        ...tool.inputSchema,
+        properties: Object.fromEntries(
+          Object.entries(tool.inputSchema.properties).filter(([name]) => !["cluster_id", "namespace"].includes(name))
+        )
+      }
     }
   }));
 }
 
-function withDefaults(name, input, defaults) {
+function enforceScope(name, input, defaults) {
   const args = { ...input };
-  if (!args.cluster_id) args.cluster_id = defaults.clusterId;
-  if (!args.namespace && defaults.namespace && name !== "trace_resource") args.namespace = defaults.namespace;
+  args.cluster_id = defaults.clusterId;
+  if (name !== "trace_resource") {
+    if (defaults.namespace) args.namespace = defaults.namespace;
+    else delete args.namespace;
+  }
+  if (defaults.namespace && args.resource_key) {
+    const resourceNamespace = String(args.resource_key).split("|")[2];
+    if (resourceNamespace !== defaults.namespace) {
+      throw new Error(`resource_key is outside the fixed namespace scope ${defaults.namespace}`);
+    }
+  }
   if (name === "rewind_cluster_state" && !args.timestamp) args.timestamp = defaults.incidentAt;
   if (name === "diff_states") {
     if (!args.from && defaults.baselineAt) args.from = defaults.baselineAt;
@@ -214,7 +228,7 @@ export async function runTemporalAgent({
       try {
         args = JSON.parse(call.function?.arguments || "{}");
         if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("tool arguments must be a JSON object");
-        args = withDefaults(name, args, defaults);
+        args = enforceScope(name, args, defaults);
         onToolCall({ name, args });
         result = await executeTemporalTool({ name, args, store, config, embeddingClient });
       } catch (error) {

@@ -21,6 +21,7 @@ Kravel collects operational history that can contain sensitive metadata. Treat i
 - If embeddings leave the cluster, redact or tokenize data first and document the processor and retention policy.
 - Apply the same review to hosted-LLM calls. Tool results can include ConfigMaps, annotations, event notes, audit identities, and resource names even though Secret values are redacted.
 - Treat Kubernetes fields as attacker-controlled prompt input. The harness instructs the model not to follow embedded instructions, caps tool output, and exposes no mutation tools, but model behavior is not a security boundary.
+- The hosted-agent caller fixes the cluster and namespace scope. Those fields are not shown to the model, model-supplied overrides are discarded, and out-of-scope resource keys are rejected.
 - Supply model credentials at runtime. The Killercoda helper streams the key through `kubectl exec` standard input and does not persist it in the Pod; production deployments should use an approved secret manager and egress policy.
 - Use HTTPS for remote model endpoints. The harness rejects plain HTTP except for loopback development endpoints.
 - Rotate `KRAVEL_API_TOKEN`; do not put it directly in a checked-in manifest.

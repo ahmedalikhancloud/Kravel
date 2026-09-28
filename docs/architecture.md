@@ -37,7 +37,7 @@ The context shard is an evidence package. It intentionally does not label a chan
 
 ## Agent harness
 
-The hosted-LLM harness reuses the MCP tool schemas and implementations instead of giving the model direct database or Kubernetes access. The model can request rewind, diff, context, and graph-trace operations; Kravel validates and executes them locally. Each tool response has a character ceiling, each turn accepts at most four calls, and the loop has a hard turn limit. When that limit is reached, the harness disables further tool calls and requests a final uncertainty-qualified report.
+The hosted-LLM harness reuses the MCP tool implementations instead of giving the model direct database or Kubernetes access. The model can request rewind, diff, context, and graph-trace operations; Kravel validates and executes them locally. Cluster and namespace are removed from the model-visible schemas and fixed by the caller, so tool arguments cannot expand the investigation's authority scope. Each tool response has a character ceiling, each turn accepts at most four calls, and the loop has a hard turn limit. When that limit is reached, the harness disables further tool calls and requests a final uncertainty-qualified report.
 
 The harness is intentionally read-only. It does not expose `kubectl`, a shell, admission controls, or remediation functions. Kubernetes fields returned by tools are treated as untrusted evidence because annotations and event messages can contain prompt-injection text.
 

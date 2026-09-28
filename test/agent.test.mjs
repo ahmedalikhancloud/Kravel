@@ -51,7 +51,8 @@ test("hosted agent executes temporal tool calls and returns the model report", a
               arguments: JSON.stringify({
                 incident_at: "2026-09-28T12:05:00Z",
                 lookback: "10m",
-                namespace: "shop"
+                namespace: "kube-system",
+                cluster_id: "wrong-cluster"
               })
             }
           }]
@@ -108,6 +109,10 @@ test("hosted agent executes temporal tool calls and returns the model report", a
     assert.equal(requests[0].headers.authorization, "Bearer test-secret");
     assert.equal(requests[0].body.tool_choice, "required");
     assert.equal(requests[0].body.tools.length, 4);
+    assert.equal(requests[0].body.tools[0].function.parameters.properties.namespace, undefined);
+    assert.equal(requests[0].body.tools[0].function.parameters.properties.cluster_id, undefined);
+    assert.match(requests[1].body.messages.at(-1).content, /"clusterId":"test-cluster"/);
+    assert.match(requests[1].body.messages.at(-1).content, /"namespace":"shop"/);
     assert.match(requests[1].body.messages.at(-1).content, /STARTUP_MODE/);
     assert.match(requests[2].body.messages.at(-1).content, /\/data\/STARTUP_MODE/);
   } finally {

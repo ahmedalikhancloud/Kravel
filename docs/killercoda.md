@@ -14,9 +14,7 @@ Kravel must collect the healthy baseline **before** the breaking script runs. Yo
    cd Kravel
    ```
 
-   While the repository is private, Git prompts for a username and password. Enter `ahmedalikhancloud` as the username and a fine-grained GitHub personal access token as the password; your account password will not work. Restrict the token to the `Kravel` repository with read-only repository contents access, and revoke it after the playground session. Do not put the token in the clone URL or a shell command. See [GitHub's HTTPS authentication instructions](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#using-a-personal-access-token-on-the-command-line).
-
-   These credentials are unnecessary after the repository becomes public. Every helper script resolves repository assets from its own file location, so its internal paths do not depend on the checkout directory name.
+   The public repository requires no GitHub credentials. Every helper script resolves repository assets from its own file location, so its internal paths do not depend on the checkout directory name.
 
 3. Bootstrap Kravel and the healthy workload:
 
