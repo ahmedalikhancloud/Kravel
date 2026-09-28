@@ -32,6 +32,7 @@ export function loadConfig() {
       "/api/v1/pods",
       "/api/v1/configmaps",
       "/api/v1/services",
+      "/api/v1/endpoints",
       "/api/v1/serviceaccounts",
       "/api/v1/persistentvolumeclaims",
       "/api/v1/namespaces",
@@ -42,6 +43,7 @@ export function loadConfig() {
       "/apis/batch/v1/jobs",
       "/apis/batch/v1/cronjobs",
       "/apis/networking.k8s.io/v1/ingresses",
+      "/apis/discovery.k8s.io/v1/endpointslices",
       "/apis/events.k8s.io/v1/events"
     ]),
     prometheusUrl: process.env.KRAVEL_PROMETHEUS_URL ?? "",

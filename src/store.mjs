@@ -52,6 +52,7 @@ const knownResourceKinds = {
   daemonsets: "DaemonSet",
   deployments: "Deployment",
   endpoints: "Endpoints",
+  endpointslices: "EndpointSlice",
   ingresses: "Ingress",
   jobs: "Job",
   namespaces: "Namespace",

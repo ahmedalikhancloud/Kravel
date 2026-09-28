@@ -132,7 +132,7 @@ If `KRAVEL_API_TOKEN` is set, all `/v1/*` calls require `Authorization: Bearer <
 
 ## Run in Kubernetes
 
-For the quickest end-to-end demonstration, use the browser-based [Killercoda walkthrough](docs/killercoda.md). It builds this repository inside a disposable Kubernetes playground, breaks a demo workload, and prints a time-travel incident report—no local cluster or registry required.
+For the quickest end-to-end demonstration, use the browser-based [Killercoda walkthrough](docs/killercoda.md). It builds this repository inside a disposable Kubernetes playground and can run either a focused ConfigMap failure or a four-incident production-style sequence covering a crash loop, silent Service selector drift, a bad image rollout, and failed scheduling—no local cluster or registry required.
 
 1. Build and publish the image, then replace `ghcr.io/YOUR_ORG/kravel:0.1.0` in [`deploy/kubernetes.yaml`](deploy/kubernetes.yaml).
 2. Review the ClusterRole. The default manifest intentionally does not grant access to Secret objects.

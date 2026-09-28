@@ -1,6 +1,6 @@
 # Killercoda demo
 
-This demo runs Kravel against Killercoda's disposable, single-node Kubernetes playground. It creates a healthy workload, records a baseline, introduces a ConfigMap regression and rollout, and asks Kravel to reconstruct the sequence that led to the resulting crash loop.
+This demo runs Kravel against Killercoda's disposable Kubernetes playground. It creates a healthy workload, records a baseline, introduces a ConfigMap regression and rollout, and asks Kravel to reconstruct the sequence that led to the resulting crash loop.
 
 Kravel must collect the healthy baseline **before** the breaking script runs. You run the investigation after the failure, but the collector is already watching in the background.
 
@@ -54,6 +54,38 @@ If you publish an image later, skip the local build:
 ```bash
 KRAVEL_IMAGE=ghcr.io/ahmedalikhancloud/kravel:0.1.0 bash demo/killercoda/bootstrap.sh
 ```
+
+## Multi-incident production showcase
+
+For a stronger demonstration, start from a fresh bootstrap and trigger four independent failures in sequence:
+
+```bash
+bash demo/killercoda/bootstrap.sh
+bash demo/killercoda/run-multi-incident.sh
+bash demo/killercoda/multi-investigate.sh
+```
+
+The scenario creates and then reconstructs:
+
+| Incident | State change | Observable symptom |
+|---|---|---|
+| Configuration regression | `ConfigMap/api-config` changes startup mode and timeout | `checkout-api` enters `CrashLoopBackOff` |
+| Service selector drift | `Service/payments-api` selects a nonexistent label | Endpoints fall from two ready addresses to zero, usually without a Warning Event |
+| Bad image rollout | `Deployment/inventory-api` receives a nonexistent tag | The replacement Pod enters `ErrImagePull` / `ImagePullBackOff` |
+| Scheduling regression | `Deployment/reports-worker` receives an impossible node selector | The replacement Pod emits `FailedScheduling` |
+
+Each mutation is annotated with `kravel.dev/change-at`. The report shows both that request-side marker and Kravel's own watch-observation time, then orders the first downstream symptoms. This makes collection latency visible instead of presenting an observation timestamp as an audit timestamp.
+
+To let the hosted agent investigate the same evidence, create a Groq key as in the fast path and run:
+
+```bash
+read -rsp 'Groq API key: ' GROQ_API_KEY && echo
+export GROQ_API_KEY
+bash demo/killercoda/multi-agent-investigate.sh
+unset GROQ_API_KEY
+```
+
+The agent prompt explicitly asks it to find every independent failure, including the Service failure that has no Warning Event. Rerun `bootstrap.sh` before switching between the single-incident and multi-incident scenarios; bootstrap resets only the disposable demo namespaces and the in-memory timeline.
 
 ## What the failure does
 
