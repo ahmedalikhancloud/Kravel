@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kravel-demo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+  namespace: kravel-demo
+data:
+  STARTUP_MODE: healthy
+  DATABASE_TIMEOUT_MS: "3000"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-api
+  namespace: kravel-demo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: checkout-api
+  template:
+    metadata:
+      labels:
+        app: checkout-api
+    spec:
+      containers:
+        - name: checkout-api
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: api-config
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "checkout-api starting with mode=${STARTUP_MODE} timeout=${DATABASE_TIMEOUT_MS}ms"
+              if [ "${STARTUP_MODE}" != "healthy" ]; then
+                echo "FATAL: invalid startup mode '${STARTUP_MODE}'; simulated database connection failure" >&2
+                exit 42
+              fi
+              while true; do
+                echo "checkout-api healthy; database timeout=${DATABASE_TIMEOUT_MS}ms"
+                sleep 15
+              done
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkout-api
+  namespace: kravel-demo
+spec:
+  selector:
+    app: checkout-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

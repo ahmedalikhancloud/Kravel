@@ -1,0 +1,5 @@
+.git
+data
+*.db*
+node_modules
+coverage
