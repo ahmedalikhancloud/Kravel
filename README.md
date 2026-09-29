@@ -134,7 +134,7 @@ If `KRAVEL_API_TOKEN` is set, all `/v1/*` calls require `Authorization: Bearer <
 
 ## Run in Kubernetes
 
-For the quickest end-to-end demonstration, use the browser-based [Killercoda walkthrough](docs/killercoda.md). It builds this repository inside a disposable Kubernetes playground and can run either a focused ConfigMap failure or a four-incident production-style sequence covering a crash loop, silent Service selector drift, a bad image rollout, and failed scheduling—no local cluster or registry required.
+For the complete copy-and-paste presentation flow, use the [demo runbook](DEMO.md). The deeper [Killercoda walkthrough](docs/killercoda.md) explains the individual scenarios and implementation details. The demo builds this repository inside a disposable Kubernetes playground and can run either a focused ConfigMap failure or a four-incident production-style sequence covering a crash loop, silent Service selector drift, a bad image rollout, and failed scheduling—no local cluster or registry required.
 
 The optional [flow-comparison walkthrough](docs/observability-comparison.md) adds browser-accessible dashboards and compares the hosted Groq agent with a Laya System-1 classifier running in a separate GitHub Codespace.
 
