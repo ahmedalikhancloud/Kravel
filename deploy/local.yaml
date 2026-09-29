@@ -12,7 +12,7 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: kravel-killercoda-observer
+  name: kravel-local-observer
 rules:
   - apiGroups: [""]
     resources: ["pods", "configmaps", "services", "endpoints", "serviceaccounts", "persistentvolumeclaims", "namespaces"]
@@ -36,11 +36,11 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: kravel-killercoda-observer
+  name: kravel-local-observer
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: kravel-killercoda-observer
+  name: kravel-local-observer
 subjects:
   - kind: ServiceAccount
     name: kravel
@@ -57,24 +57,13 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app.kubernetes.io/name: kravel
+      app: kravel
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: kravel
+        app: kravel
     spec:
       serviceAccountName: kravel
-      # bootstrap.sh imports the locally built image into the control-plane
-      # node's containerd store. Keep this Pod on that same node.
-      nodeSelector:
-        kubernetes.io/hostname: controlplane
-      tolerations:
-        - key: node-role.kubernetes.io/control-plane
-          operator: Exists
-          effect: NoSchedule
-        - key: node-role.kubernetes.io/master
-          operator: Exists
-          effect: NoSchedule
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -84,7 +73,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: kravel
-          image: kravel:killercoda
+          image: kravel:local
           imagePullPolicy: Never
           args: ["node", "src/main.mjs", "serve-watch"]
           env:
@@ -95,7 +84,19 @@ spec:
             - name: KRAVEL_DB_PATH
               value: /data/kravel.db
             - name: KRAVEL_CLUSTER_ID
-              value: killercoda
+              value: docker-desktop
+            - name: KRAVEL_LAYA_URL
+              value: http://kravel-laya.kravel-ai.svc.cluster.local:8000
+            - name: KRAVEL_LAYA_MODEL
+              value: english
+            - name: KRAVEL_LLM_BASE_URL
+              value: http://model-runner.docker.internal/engines/v1
+            - name: KRAVEL_LLM_MODEL
+              value: ai/qwen3:4b-thinking-2507-q4_K_M
+            - name: KRAVEL_LLM_MAX_TURNS
+              value: "6"
+            - name: KRAVEL_MLFLOW_URL
+              value: http://kravel-mlflow.kravel-observability.svc.cluster.local:5000
           ports:
             - name: http
               containerPort: 8080
@@ -103,8 +104,7 @@ spec:
             httpGet:
               path: /readyz
               port: http
-            initialDelaySeconds: 1
-            periodSeconds: 2
+            periodSeconds: 3
           livenessProbe:
             httpGet:
               path: /healthz
@@ -115,7 +115,7 @@ spec:
               cpu: 50m
               memory: 64Mi
             limits:
-              cpu: 500m
+              cpu: "1"
               memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
@@ -141,7 +141,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    app.kubernetes.io/name: kravel
+    app: kravel
   ports:
     - name: http
       port: 8080

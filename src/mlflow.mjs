@@ -1,3 +1,5 @@
+import { performance } from "node:perf_hooks";
+
 function trackingUrl(value) {
   if (!value) return null;
   const url = new URL(value);
@@ -16,7 +18,7 @@ function cleanKey(value) {
 }
 
 export class MlflowClient {
-  constructor({ url = "", experimentName = "Kravel Incident Flow Comparison", fetchImpl = globalThis.fetch } = {}) {
+  constructor({ url = "", experimentName = "Kravel Local Incident Pipeline", fetchImpl = globalThis.fetch } = {}) {
     this.url = trackingUrl(url);
     this.experimentName = experimentName;
     this.fetchImpl = fetchImpl;
@@ -98,45 +100,77 @@ export class MlflowClient {
   }
 }
 
-export async function logComparisonToMlflow(client, { comparisonId, scenario, runs }) {
-  if (!client?.enabled) return { logged: false };
+export async function logPipelineToMlflow(client, { pipelineId, scenario, result }) {
+  if (!client?.enabled) return { logged: false, mlflowMs: 0 };
+  const started = performance.now();
   const experimentId = await client.experimentId();
   const parentRunId = await client.createRun({
     experimentId,
-    runName: `comparison-${comparisonId.slice(0, 8)}`,
-    tags: { "kravel.comparison_id": comparisonId, "kravel.scenario": scenario }
+    runName: `pipeline-${pipelineId.slice(0, 8)}`,
+    tags: {
+      "kravel.pipeline_id": pipelineId,
+      "kravel.scenario": scenario,
+      "kravel.route": result.route,
+      "kravel.review_status": result.reviewStatus
+    }
   });
   try {
-    for (const run of runs) {
+    for (const [stage, latencyMs] of Object.entries(result.stageMetrics)) {
       const childRunId = await client.createRun({
         experimentId,
         parentRunId,
-        runName: run.flow,
+        runName: stage,
         tags: {
-          "kravel.comparison_id": comparisonId,
-          "kravel.flow": run.flow,
-          "kravel.status": run.status
+          "kravel.pipeline_id": pipelineId,
+          "kravel.stage": stage,
+          "kravel.status": "success"
         }
       });
       await client.logRun(childRunId, {
-        params: { provider: run.provider, model: run.model, scenario },
-        metrics: {
-          total_ms: run.totalMs,
-          evidence_ms: run.evidenceMs,
-          model_ms: run.modelMs,
-          tool_ms: run.toolMs,
-          tool_calls: run.toolCalls,
-          confidence: run.confidence,
-          ...Object.fromEntries(Object.entries(run.diagnosis ?? {}).map(([name, value]) => [`diagnosis.${name}`, value]))
-        },
-        tags: { "kravel.error_code": run.errorCode || "none" }
+        params: { scenario },
+        metrics: { latency_ms: latencyMs }
       });
-      await client.finishRun(childRunId, run.status === "success" ? "FINISHED" : "FAILED");
+      await client.finishRun(childRunId, "FINISHED");
     }
+
+    const mlflowMs = performance.now() - started;
+    const mlflowChildRunId = await client.createRun({
+      experimentId,
+      parentRunId,
+      runName: "mlflow_logging",
+      tags: { "kravel.pipeline_id": pipelineId, "kravel.stage": "mlflow_logging", "kravel.status": "success" }
+    });
+    await client.logRun(mlflowChildRunId, { params: { scenario }, metrics: { latency_ms: mlflowMs } });
+    await client.finishRun(mlflowChildRunId, "FINISHED");
+    await client.logRun(parentRunId, {
+      params: {
+        scenario,
+        route: result.route,
+        leading_diagnosis: result.decision,
+        review_status: result.reviewStatus,
+        laya_model: result.laya.model,
+        qwen_model: result.qwen?.model ?? "not_invoked"
+      },
+      metrics: {
+        pipeline_without_mlflow_ms: result.stageMetrics.pipeline_without_mlflow,
+        mlflow_logging_ms: mlflowMs,
+        total_observed_ms: result.stageMetrics.pipeline_without_mlflow + mlflowMs,
+        laya_confidence: result.laya.confidence,
+        qwen_tool_calls: result.qwen?.toolCalls ?? 0,
+        ...Object.fromEntries(Object.entries(result.laya.diagnosis).map(([name, value]) => [`diagnosis.${name}`, value])),
+        ...Object.fromEntries(Object.entries(result.stageMetrics).map(([name, value]) => [`stage.${name}_ms`, value]))
+      },
+      tags: {
+        "kravel.guardrail.laya_input": result.guardrails.layaInput.decision,
+        "kravel.guardrail.laya_output": result.guardrails.layaOutput.decision,
+        "kravel.guardrail.qwen_input": result.guardrails.qwenInput?.decision ?? "not_invoked",
+        "kravel.guardrail.qwen_output": result.guardrails.qwenOutput?.decision ?? "not_invoked"
+      }
+    });
     await client.finishRun(parentRunId, "FINISHED");
+    return { logged: true, parentRunId, mlflowMs };
   } catch (error) {
     await client.finishRun(parentRunId, "FAILED").catch(() => {});
     throw error;
   }
-  return { logged: true, parentRunId };
 }

@@ -3,8 +3,6 @@ kind: Deployment
 metadata:
   name: payments-api
   namespace: kravel-demo
-  labels:
-    kravel.dev/scenario: multi-incident
 spec:
   replicas: 2
   selector:
@@ -14,44 +12,32 @@ spec:
     metadata:
       labels:
         app: payments-api
-        tier: backend
     spec:
       containers:
         - name: payments-api
           image: busybox:1.36
           imagePullPolicy: IfNotPresent
           command: ["sh", "-c"]
-          args:
-            - |
-              mkdir -p /tmp/www
-              echo 'payments-api healthy' >/tmp/www/index.html
-              exec httpd -f -p 8080 -h /tmp/www
+          args: ["mkdir -p /tmp/www; echo healthy >/tmp/www/index.html; exec httpd -f -p 8080 -h /tmp/www"]
           readinessProbe:
             tcpSocket:
               port: 8080
             initialDelaySeconds: 1
             periodSeconds: 2
           resources:
-            requests:
-              cpu: 5m
-              memory: 8Mi
-            limits:
-              cpu: 50m
-              memory: 32Mi
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {cpu: 50m, memory: 32Mi}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: payments-api
   namespace: kravel-demo
-  labels:
-    kravel.dev/scenario: multi-incident
 spec:
   selector:
     app: payments-api
   ports:
-    - name: http
-      port: 80
+    - port: 80
       targetPort: 8080
 ---
 apiVersion: apps/v1
@@ -59,8 +45,6 @@ kind: Deployment
 metadata:
   name: inventory-api
   namespace: kravel-demo
-  labels:
-    kravel.dev/scenario: multi-incident
 spec:
   replicas: 1
   selector:
@@ -76,22 +60,16 @@ spec:
           image: busybox:1.36
           imagePullPolicy: IfNotPresent
           command: ["sh", "-c"]
-          args: ["echo 'inventory-api healthy'; exec sleep 86400"]
+          args: ["exec sleep 86400"]
           resources:
-            requests:
-              cpu: 5m
-              memory: 8Mi
-            limits:
-              cpu: 50m
-              memory: 32Mi
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {cpu: 50m, memory: 32Mi}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: reports-worker
   namespace: kravel-demo
-  labels:
-    kravel.dev/scenario: multi-incident
 spec:
   replicas: 1
   selector:
@@ -107,11 +85,7 @@ spec:
           image: busybox:1.36
           imagePullPolicy: IfNotPresent
           command: ["sh", "-c"]
-          args: ["echo 'reports-worker healthy'; exec sleep 86400"]
+          args: ["exec sleep 86400"]
           resources:
-            requests:
-              cpu: 5m
-              memory: 8Mi
-            limits:
-              cpu: 50m
-              memory: 32Mi
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {cpu: 50m, memory: 32Mi}

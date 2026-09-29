@@ -16,12 +16,12 @@ test("HTTP API ingests and rewinds a resource", async (context) => {
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   store.recordBenchmarkRun({
-    comparisonId: "comparison-1",
+    comparisonId: "pipeline-1",
     clusterId: "api-test",
     scenario: "synthetic",
-    flow: "laya_classifier",
-    provider: "laya",
-    model: "english",
+    flow: "incident_pipeline",
+    provider: "local",
+    model: "english+qwen-test",
     status: "success",
     startedAt: "2026-09-28T12:00:00Z",
     finishedAt: "2026-09-28T12:00:01Z",
@@ -29,15 +29,21 @@ test("HTTP API ingests and rewinds a resource", async (context) => {
     evidenceMs: 5,
     modelMs: 120,
     confidence: 0.91,
-    diagnosis: { config_regression: 0.94 }
+    diagnosis: { config_regression: 0.94 },
+    route: "qwen_investigation",
+    decision: "config_regression",
+    reviewStatus: "awaiting_human_review",
+    stageMetrics: { laya_input_guardrail: 1.5, qwen_output_guardrail: 2.5, mlflow_logging: 20 }
   });
 
   const metrics = await fetch(`${baseUrl}/metrics`);
   assert.equal(metrics.status, 200);
   const metricText = await metrics.text();
-  assert.match(metricText, /kravel_benchmark_latency_seconds\{flow="laya_classifier",phase="end_to_end"\} 0\.125/);
-  assert.match(metricText, /kravel_benchmark_latency_distribution_seconds_bucket\{flow="laya_classifier",phase="end_to_end",le="0\.25"\} 1/);
+  assert.match(metricText, /kravel_benchmark_latency_seconds\{flow="incident_pipeline",phase="end_to_end"\} 0\.125/);
+  assert.match(metricText, /kravel_benchmark_latency_distribution_seconds_bucket\{flow="incident_pipeline",phase="end_to_end",le="0\.25"\} 1/);
   assert.match(metricText, /diagnosis="config_regression"\} 0\.94/);
+  assert.match(metricText, /kravel_pipeline_stage_latency_seconds\{flow="incident_pipeline",stage="laya_input_guardrail"\} 0\.0015/);
+  assert.match(metricText, /route="qwen_investigation",decision="config_regression",review_status="awaiting_human_review"/);
 
   const unauthorized = await fetch(`${baseUrl}/v1/state/rewind?timestamp=2026-09-28T12:01:00Z`);
   assert.equal(unauthorized.status, 401);

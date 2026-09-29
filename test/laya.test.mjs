@@ -66,6 +66,6 @@ test("Laya noul questions include explicit criteria and neutral labels", () => {
 test("refuses to send a Laya token over remote plain HTTP", async () => {
   await assert.rejects(
     runLayaClassifier({ url: "http://example.invalid", apiKey: "secret", state: "evidence" }),
-    /non-local plain HTTP/
+    /Remote Laya must use HTTPS/
   );
 });

@@ -10,10 +10,9 @@ Options:
   --baseline <RFC3339>    Known-good timestamp
   --namespace <name>      Namespace to investigate
   --question <text>       Investigation question
-  --model <name>          Hosted model name
+  --model <name>          Local model name
   --base-url <url>        OpenAI-compatible API base URL
   --max-turns <number>    Maximum tool-calling turns (1-10)
-  --api-key-stdin         Read the API key from standard input
   --help                  Show this help`;
 }
 
@@ -31,10 +30,6 @@ function parseArguments(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--help" || flag === "-h") return { help: true };
-    if (flag === "--api-key-stdin") {
-      options.apiKeyStdin = true;
-      continue;
-    }
     const key = valueFlags.get(flag);
     if (!key) throw new Error(`Unknown option: ${flag}`);
     const value = argv[index + 1];
@@ -43,17 +38,6 @@ function parseArguments(argv) {
     index += 1;
   }
   return options;
-}
-
-async function readSecretFromStdin(maxBytes = 16_384) {
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of process.stdin) {
-    size += chunk.length;
-    if (size > maxBytes) throw new Error("API key input is unexpectedly large");
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString("utf8").trim();
 }
 
 let store;
@@ -66,7 +50,6 @@ try {
   if (!options.incidentAt) throw new Error("--incident is required");
 
   const config = loadConfig();
-  const apiKey = options.apiKeyStdin ? await readSecretFromStdin() : config.llmApiKey;
   store = new TemporalStore(config.dbPath);
   const embeddingClient = new EmbeddingClient({
     url: config.embeddingUrl,
@@ -81,7 +64,6 @@ try {
     baselineAt: options.baselineAt,
     namespace: options.namespace,
     question: options.question,
-    apiKey,
     baseUrl: options.baseUrl,
     model: options.model,
     maxTurns: options.maxTurns,
@@ -91,8 +73,8 @@ try {
     }
   });
 
-  console.log("\nKRAVEL HOSTED-LLM INCIDENT REPORT");
-  console.log("=================================");
+  console.log("\nKRAVEL LOCAL QWEN INCIDENT REPORT");
+  console.log("==================================");
   console.log(`Model: ${result.model}`);
   console.log(`Temporal tool calls: ${result.toolCalls}`);
   console.log("");

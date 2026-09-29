@@ -80,7 +80,7 @@ test("multi-incident report reconstructs four independent production failures", 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "kravel-multi-report-"));
   const dbPath = path.join(directory, "report.db");
   const store = new TemporalStore(dbPath);
-  const clusterId = "killercoda";
+  const clusterId = "docker-desktop";
 
   try {
     store.recordResourceChange({ clusterId, action: "ADDED", object: configMap("healthy", "1"), eventAt: "2026-09-28T12:00:00Z" });

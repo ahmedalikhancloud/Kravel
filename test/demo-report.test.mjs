@@ -29,11 +29,11 @@ function deployment(resourceVersion, restartedAt) {
   };
 }
 
-test("Killercoda report explains the controlled configuration regression", () => {
+test("deterministic report explains the controlled configuration regression", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "kravel-report-"));
   const dbPath = path.join(directory, "report.db");
   const store = new TemporalStore(dbPath);
-  const clusterId = "killercoda";
+  const clusterId = "docker-desktop";
   try {
     store.recordResourceChange({ clusterId, action: "ADDED", object: configMap("healthy", "3000", "1"), eventAt: "2026-09-28T11:59:00Z" });
     store.recordResourceChange({ clusterId, action: "ADDED", object: deployment("1"), eventAt: "2026-09-28T11:59:01Z" });

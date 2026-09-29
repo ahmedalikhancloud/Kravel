@@ -5,5 +5,4 @@ data/
 .env
 node_modules/
 coverage/
-.kravel-demo-state
-.kravel-observability-state
+.kravel-local-state.json

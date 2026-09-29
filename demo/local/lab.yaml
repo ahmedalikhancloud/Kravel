@@ -44,10 +44,7 @@ spec:
                 echo "FATAL: invalid startup mode '${STARTUP_MODE}'; simulated database connection failure" >&2
                 exit 42
               fi
-              while true; do
-                echo "checkout-api healthy; database timeout=${DATABASE_TIMEOUT_MS}ms"
-                sleep 15
-              done
+              while true; do sleep 15; done
           resources:
             requests:
               cpu: 5m
@@ -55,16 +52,3 @@ spec:
             limits:
               cpu: 50m
               memory: 32Mi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: checkout-api
-  namespace: kravel-demo
-spec:
-  selector:
-    app: checkout-api
-  ports:
-    - name: http
-      port: 80
-      targetPort: 8080

@@ -13,7 +13,7 @@
     "watch": "node src/main.mjs watch",
     "mcp": "node src/main.mjs mcp",
     "agent": "node src/agent-cli.mjs",
-    "compare": "node src/compare-cli.mjs",
+    "pipeline": "node src/pipeline-cli.mjs",
     "demo": "node examples/demo.mjs",
     "test": "node --test"
   }

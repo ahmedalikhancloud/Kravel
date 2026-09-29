@@ -1,290 +1,242 @@
-# Kravel demo runbook
+# Fully local Kravel demo
 
-This runbook demonstrates Kravel reconstructing four Kubernetes failures, then compares two AI analysis flows in Grafana and MLflow:
+This is the supported presentation path. Kubernetes, Laya, Qwen, Kravel, Prometheus, Grafana, and MLflow all run on your laptop. There are no API keys or public URLs.
 
-- **Groq agent:** chooses Kravel's temporal tools and writes an investigation report.
-- **Laya classifier:** evaluates the same incident window and returns four diagnosis probabilities.
+## What the demo shows
 
-Allow about **15–25 minutes** for a first run. You will use two browser workspaces, plus the Grafana and MLflow result tabs:
+1. Kravel watches a healthy cluster and records a known-good baseline.
+2. The script introduces realistic Kubernetes failures.
+3. Kravel reconstructs the incident window from historical state and Events.
+4. An input guardrail checks the evidence before Laya sees it.
+5. Laya classifies the incident cheaply.
+6. An output guardrail validates Laya's probabilities.
+7. A policy gate chooses a predefined runbook or escalates to Qwen.
+8. Qwen receives separately guarded input, calls read-only temporal tools, and produces a guarded investigation.
+9. The routine path executes deterministic read-only checks; either path generates a remediation proposal that remains pending human approval.
+10. Grafana and MLflow show the latency added by every stage.
 
-| Workspace | Purpose |
-|---|---|
-| Killercoda | Kubernetes, Kravel, Prometheus, Grafana, and MLflow |
-| GitHub Codespaces | Temporary Laya System-1 server |
+## One-time laptop setup
 
-## Before you start
+### 1. Update the NVIDIA driver
 
-You need:
+Docker Model Runner currently requires NVIDIA driver `576.57` or newer on Windows. Install a current driver from NVIDIA, reboot, then verify:
 
-1. A GitHub account with Codespaces included usage remaining.
-2. A Groq API key from the [Groq API Keys page](https://console.groq.com/keys).
-3. A fresh [Killercoda Kubernetes playground](https://killercoda.com/playgrounds/scenario/kubernetes).
+```powershell
+nvidia-smi
+```
 
-Keep the Groq key, temporary Laya URL, and temporary Laya token private. Do not paste them into chat, screenshots, commits, Grafana, MLflow, or Kubernetes manifests. The scripts request them with hidden terminal prompts and do not persist them.
+### 2. Install WSL 2
 
-## Step 1: Start Kravel in Killercoda
+Open PowerShell as Administrator:
 
-In the Killercoda terminal, clone the repository:
+```powershell
+wsl --install
+```
 
-```bash
+Reboot when Windows asks. Then update WSL:
+
+```powershell
+wsl --update
+wsl --status
+```
+
+### 3. Install and configure Docker Desktop
+
+Install the latest [Docker Desktop for Windows](https://docs.docker.com/desktop/setup/install/windows-install/). In Docker Desktop:
+
+1. Use Linux containers.
+2. Open **Settings → General** and enable the WSL 2 engine.
+3. Leave **Use containerd for pulling and storing images** enabled.
+4. Open **Kubernetes** and create a one-node cluster using the `kubeadm` provisioner. The local manifests use `imagePullPolicy: Never`, and this provisioner is the least surprising path for locally built images.
+5. Open **Settings → AI** and enable Docker Model Runner.
+6. Enable GPU-backed inference.
+7. Leave host-side Model Runner TCP access disabled; Kubernetes reaches it through Docker's internal network.
+
+Verify the cluster:
+
+```powershell
+kubectl config use-context docker-desktop
+kubectl get nodes
+docker model status
+```
+
+The scripts deliberately refuse to operate against any Kubernetes context other than `docker-desktop`.
+
+### 4. Clone Kravel
+
+```powershell
 git clone https://github.com/ahmedalikhancloud/Kravel.git
 cd Kravel
 ```
 
-Build and deploy Kravel, then create the healthy baseline:
+## Prepare everything before presentation day
 
-```bash
-bash demo/killercoda/bootstrap.sh
+Run once while you have a reliable internet connection:
+
+```powershell
+.\demo\local\prepare.ps1
 ```
 
-This can take a few minutes while Docker downloads the Node base image. Continue only after you see:
+This command:
 
-```text
-==> Baseline is ready
+- downloads `ai/qwen3:4b-thinking-2507-q4_K_M`;
+- limits its context window to 4,096 tokens;
+- builds the local Kravel image;
+- builds the CPU-only Laya image;
+- downloads Laya's English checkpoint into a persistent Kubernetes volume;
+- pulls the workload and observability images;
+- starts every component once;
+- confirms a Kravel Pod can reach Docker Model Runner.
+
+The first run can take several minutes and needs multiple gigabytes of disk space. Do not leave this step until the presentation begins.
+
+## Run the main escalation demo
+
+```powershell
+.\demo\local\demo.ps1 -Scenario escalation
 ```
 
-You should also see one healthy `checkout-api` Pod and a collector-state summary.
+The script creates four failures:
 
-## Step 2: Break the cluster in four different ways
+- a ConfigMap regression followed by `CrashLoopBackOff`;
+- Service selector drift that silently removes all backends;
+- a rollout referencing a nonexistent image;
+- an impossible node selector causing `FailedScheduling`.
 
-Run the multi-incident scenario:
+Multiple independent failures and severe classes should make the policy gate escalate to Qwen. The terminal prints:
 
-```bash
-bash demo/killercoda/run-multi-incident.sh
+- Laya's classification and policy reasons;
+- each stage latency;
+- every temporal tool selected by Qwen;
+- the guarded Qwen report;
+- a dry-run remediation proposal marked `awaiting_human_review` and `remediationExecuted: false`.
+
+The exact route is determined by the real local Laya output. If confidence is unexpectedly low or multiple classes cross the positive threshold, escalation is the intended safe behavior.
+
+## Show the routine path
+
+To demonstrate a smaller, potentially high-confidence incident:
+
+```powershell
+.\demo\local\demo.ps1 -Scenario routine
 ```
 
-The script introduces these failures one at a time:
+This creates only the ConfigMap regression. If Laya meets the configured confidence and margin thresholds, the policy selects `predefined_runbook`; otherwise it safely escalates to Qwen. Neither route mutates the cluster during remediation.
 
-| # | Change | Result |
-|---:|---|---|
-| 1 | Regresses `ConfigMap/api-config` | `checkout-api` crash loop |
-| 2 | Changes the `payments-api` Service selector | Ready endpoints fall to zero |
-| 3 | Deploys a nonexistent `inventory-api` image | `ImagePullBackOff` |
-| 4 | Adds an impossible `reports-worker` node selector | `FailedScheduling` |
+## Open the dashboards
 
-Continue after you see:
+The demo script creates localhost-only port forwards:
 
-```text
-==> All four failures are active
+- Grafana: [http://localhost:3000](http://localhost:3000)
+- MLflow: [http://localhost:5000](http://localhost:5000)
+
+Grafana's **Kravel Local Incident Pipeline** dashboard shows:
+
+- observed end-to-end latency;
+- Laya and Qwen inference latency;
+- all four guardrail timings;
+- evidence, policy, temporal-tool, proposal, and MLflow timing;
+- Laya probabilities;
+- Qwen tool-call count;
+- aggregate p95 stage latency after repeated runs.
+
+MLflow's **Kravel Local Incident Pipeline** experiment contains one parent run per pipeline execution and one child run per measured stage. MLflow stores numeric timing and bounded labels only; it does not store cluster evidence, prompts, reports, endpoints, or credentials.
+
+The `mlflow_logging` measurement covers the MLflow requests completed before that measurement is written. The final metric-write request cannot measure itself, so it is intentionally excluded.
+
+## Build a better latency sample
+
+Reuse the same recorded incident window without breaking the cluster again:
+
+```powershell
+.\demo\local\run-pipeline.ps1 -Runs 3
 ```
 
-The command also prints the baseline, change, symptom, and final incident timestamps. Kravel saves these automatically for later commands.
-
-## Step 3: Prove reconstruction works without an LLM
-
-Run the deterministic report first:
-
-```bash
-bash demo/killercoda/multi-investigate.sh
-```
-
-Verify that it identifies all four independent failures. This is useful during a presentation because it proves state reconstruction is a Kravel capability rather than an LLM guess.
-
-## Step 4: Start the dashboards
-
-Still in Killercoda, deploy Prometheus, Grafana, and MLflow:
-
-```bash
-bash demo/killercoda/observability-up.sh
-```
-
-Wait for all three deployments to finish. The script then prints two links:
-
-```text
-Grafana: https://...
-MLflow:  https://...
-```
-
-Open both links in new browser tabs. The pages may be empty until the first comparison run.
-
-These demo UIs are anonymous and intended only for the synthetic scenario. Anyone with a link may be able to open it while the Killercoda session is active.
-
-## Step 5: Start Laya in GitHub Codespaces
-
-Open the [Kravel GitHub repository](https://github.com/ahmedalikhancloud/Kravel), then select:
-
-**Code → Codespaces → Create codespace on main**
-
-In the Codespace terminal, run:
-
-```bash
-bash demo/codespaces/laya-server.sh
-```
-
-The first run installs Laya and downloads its English checkpoint, so it may take several minutes. Continue after the terminal prints:
-
-```text
-Laya is ready. Enter these values only when compare-flows.sh prompts for them:
-URL:   https://.../v1/systemone
-Token: ...
-```
-
-Keep this tab and terminal running. You will need the URL and token in the next step.
-
-If the script says it could not change port visibility automatically:
-
-1. Open the **PORTS** tab at the bottom of the Codespace.
-2. Find port `8000`.
-3. Right-click it and select **Port Visibility → Public**.
-
-The port is public, but Laya inference still requires the random bearer token. Use it only with this synthetic demo.
-
-## Step 6: Run Groq and Laya over the same incident
-
-Return to the Killercoda terminal and run:
-
-```bash
-bash demo/killercoda/compare-flows.sh
-```
-
-The script asks for three values. Paste each value and press Enter. The terminal intentionally does not display what you paste.
-
-1. **Groq API key** — from the Groq console.
-2. **Temporary Laya HTTPS URL** — the Codespace URL ending in `/v1/systemone`.
-3. **Temporary Laya bearer token** — printed beside the URL.
-
-A successful run prints:
-
-- Groq's total time, hosted-model time, temporal-tool count, and investigation report;
-- Laya's total time, evidence-building time, model round-trip time, and four probabilities;
-- confirmation that comparison metadata reached MLflow.
-
-The two flows are intentionally different. Groq performs a multi-step investigation and generates a narrative. Laya makes four structured, zero-shot decisions in one request. Compare their timings, but do not treat the results as equivalent model-quality measurements.
-
-## Step 7: View the results
-
-Wait a few seconds, then refresh Grafana. The **Kravel Flow Comparison** dashboard shows:
-
-- latest end-to-end latency for both flows;
-- evidence, model, tool, and total timing components;
-- Groq temporal-tool calls;
-- Laya probabilities for all four incident classes;
-- aggregate p95 latency over successful runs.
-
-In MLflow, open the **Kravel Incident Flow Comparison** experiment. Each comparison has one parent run and two child runs:
-
-- `groq_agent`
-- `laya_classifier`
-
-MLflow receives numeric timings and bounded labels only. It does not receive cluster evidence, prompts, model answers, credentials, or endpoint URLs.
-
-For a better latency chart, run the comparison two or three more times:
-
-```bash
-bash demo/killercoda/compare-flows.sh
-```
-
-Re-enter the three hidden values each time, then refresh Grafana.
-
-## Suggested presentation flow
-
-Use this short narration:
-
-1. **Show the broken cluster:** display the crash loop, missing Service endpoints, image-pull failure, and unschedulable Pod.
-2. **Show the deterministic report:** explain that Kravel recorded the healthy baseline before anything broke.
-3. **Point out the silent failure:** selector drift may have no Warning Event, but the state diff still exposes it.
-4. **Run the AI comparison:** Groq chooses temporal tools while Laya classifies a compact evidence shard.
-5. **Open Grafana:** compare total and component latency rather than presenting only one headline number.
-6. **Open MLflow:** show that repeated experiments are grouped and reviewable.
-7. **State the limitation:** correlation is evidence, not proof; application logs, audit records, and production metrics would strengthen causal claims.
-
-## Troubleshooting
-
-### Kravel reports `ErrImageNeverPull`
-
-Make sure the checkout contains the node-pinning fix, then rebuild:
-
-```bash
-git pull --ff-only
-bash demo/killercoda/bootstrap.sh
-```
-
-### A Killercoda command times out
-
-Inspect the relevant Pods and recent events:
-
-```bash
-kubectl get pods -A
-kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 40
-```
-
-For Kravel specifically:
-
-```bash
-kubectl -n kravel-system describe pod -l app.kubernetes.io/name=kravel
-kubectl -n kravel-system logs deployment/kravel --tail=100
-```
-
-### Grafana or MLflow does not open
-
-Check the observability Pods and port-forward logs:
-
-```bash
-kubectl -n kravel-observability get pods
-cat /tmp/kravel-grafana-port-forward.log
-cat /tmp/kravel-mlflow-port-forward.log
-```
-
-Then rerun:
-
-```bash
-bash demo/killercoda/observability-up.sh
-```
-
-### Grafana has no data
-
-Run `compare-flows.sh`, wait at least five seconds for Prometheus to scrape Kravel, and refresh the dashboard.
-
-### Laya is unavailable
-
-Check all four items:
-
-1. The Codespace is still running.
-2. Port `8000` is **Public** in the Codespace **PORTS** tab.
-3. The URL starts with `https://` and ends with `/v1/systemone`.
-4. You entered the token printed by the current Laya process.
-
-To inspect Laya startup failures inside the Codespace:
-
-```bash
-tail -n 100 /tmp/kravel-laya.log
-```
-
-You can restart it with:
-
-```bash
-bash demo/codespaces/laya-server.sh stop
-bash demo/codespaces/laya-server.sh
-```
-
-### Groq returns an authentication or rate-limit error
-
-Create or verify the key at the [Groq API Keys page](https://console.groq.com/keys). Free-plan rate limits can change; check the [Groq rate-limit documentation](https://console.groq.com/docs/rate-limits).
+This is useful for showing warm-model latency and building Grafana's p95 charts. The first Qwen request after an idle period may be slower because the model is loaded on demand.
+
+## Presentation sequence
+
+A compact narration is:
+
+1. Show the healthy Pods.
+2. Run `demo.ps1` and explain each injected failure.
+3. Point out Laya's fast classification.
+4. Explain the policy decision and why severe or ambiguous evidence escalates.
+5. Show Qwen choosing time-travel tools instead of receiving unrestricted cluster access.
+6. Show the routine branch's read-only automation evidence, then the proposal's `remediationExecuted: false` and `awaiting_human_review` fields.
+7. Open Grafana for the stage-latency view.
+8. Open MLflow and expand one run to show the individual guardrail and inference stages.
 
 ## Cleanup
 
-In Killercoda:
+Remove disposable workloads, Kravel history, dashboards, and port forwards while retaining downloaded models:
 
-```bash
-bash demo/killercoda/reset.sh
+```powershell
+.\demo\local\reset.ps1
 ```
 
-In the Codespace:
+To also remove Laya and its persistent checkpoint cache:
 
-```bash
-bash demo/codespaces/laya-server.sh stop
+```powershell
+.\demo\local\reset.ps1 -Full
 ```
 
-Finally, stop or delete the Codespace so it does not continue consuming included usage. Killercoda is ephemeral, and Kravel's demo data uses `emptyDir`, so the captured history disappears when the environment is removed.
+The Qwen model and Docker images remain cached. Remove those separately through Docker Desktop only if you intentionally want to reclaim disk space.
 
-## What success looks like
+## Troubleshooting
 
-At the end of the demo, you should have shown:
+### `docker model` is not recognized
 
-- four ordered Kubernetes failures reconstructed from a previously healthy baseline;
-- a state-only failure that Kubernetes Warning Events alone would miss;
-- an evidence-grounded Groq investigation using read-only temporal tools;
-- a Laya probability vector over the same incident window;
-- side-by-side latency in Grafana;
-- paired, repeatable experiment records in MLflow;
-- no API keys, tokens, evidence payloads, or temporary endpoint URLs persisted by the comparison workflow.
+Update Docker Desktop and enable Docker Model Runner under **Settings → AI**.
+
+### GPU-backed inference is unavailable
+
+Verify the NVIDIA driver, run `wsl --update`, restart Docker Desktop, and confirm GPU-backed inference is enabled. Your local Qwen run may otherwise be slow or unavailable.
+
+### `ErrImageNeverPull` for `kravel:local` or `kravel-laya:local`
+
+Confirm Docker Desktop Kubernetes uses the `kubeadm` provisioner, the containerd image store is enabled, and `prepare.ps1` completed successfully. Then rebuild:
+
+```powershell
+.\demo\local\prepare.ps1
+```
+
+### Laya startup takes several minutes
+
+The first startup downloads and loads its checkpoint. Inspect it with:
+
+```powershell
+kubectl -n kravel-ai logs deployment/kravel-laya
+kubectl -n kravel-ai get pods,pvc
+```
+
+Later starts reuse `laya-model-cache` unless you run `reset.ps1 -Full` or reset Docker Desktop's Kubernetes cluster.
+
+### Kravel cannot reach Qwen
+
+```powershell
+kubectl -n kravel-system exec deployment/kravel -- node -e "fetch('http://model-runner.docker.internal/engines/v1/models').then(r=>console.log(r.status)).catch(console.error)"
+```
+
+If it fails, verify Docker Model Runner is enabled and restart Docker Desktop. Do not expose the Model Runner API to your LAN as a workaround.
+
+### The dashboard is empty
+
+Run the pipeline at least once, wait a few seconds for Prometheus, then refresh Grafana:
+
+```powershell
+.\demo\local\run-pipeline.ps1
+```
+
+### Port 3000 or 5000 is already used
+
+Stop the conflicting local service or edit the local ports in `demo/local/demo.ps1`. The port forwards intentionally bind only to `127.0.0.1`.
+
+## Safety boundaries
+
+- Run only the included synthetic scenarios.
+- The Kubernetes role is read-only.
+- Model and dashboard endpoints are not published externally.
+- Docker Model Runner's API has no authentication, so external TCP access stays disabled.
+- Guardrails are deterministic filters and validators, not proof that model output is safe or correct.
+- No remediation command is executed; a human remains the approval boundary.

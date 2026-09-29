@@ -148,3 +148,27 @@ test("deletion removes an object from later reconstructed state", () => {
   assert.equal(recreated.changes[0].patch[0].op, "add");
   store.close();
 });
+
+test("stores bounded incident-pipeline routing and per-stage latency", () => {
+  const store = new TemporalStore(":memory:");
+  store.recordBenchmarkRun({
+    comparisonId: "pipeline-test",
+    clusterId,
+    scenario: "synthetic",
+    flow: "incident_pipeline",
+    provider: "local",
+    model: "english+qwen-test",
+    status: "success",
+    startedAt: "2026-09-29T12:00:00Z",
+    finishedAt: "2026-09-29T12:00:01Z",
+    route: "qwen_investigation",
+    decision: "bad_image_rollout",
+    reviewStatus: "awaiting_human_review",
+    stageMetrics: { laya_input_guardrail: 1.25, qwen_inference: 900, "invalid stage": 100 }
+  });
+  const run = store.benchmarkRuns({ clusterId })[0];
+  assert.equal(run.route, "qwen_investigation");
+  assert.equal(run.reviewStatus, "awaiting_human_review");
+  assert.deepEqual(run.stageMetrics, { laya_input_guardrail: 1.25, qwen_inference: 900 });
+  store.close();
+});

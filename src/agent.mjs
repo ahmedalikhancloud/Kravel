@@ -1,8 +1,10 @@
 import { executeTemporalTool, temporalTools } from "./mcp.mjs";
 import { performance } from "node:perf_hooks";
+import { guardModelInput } from "./guardrails.mjs";
+import { isInternalHostname, safeServiceUrl } from "./network-safety.mjs";
 
-const DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
-const DEFAULT_MODEL = "openai/gpt-oss-20b";
+const DEFAULT_BASE_URL = "http://model-runner.docker.internal/engines/v1";
+const DEFAULT_MODEL = "ai/qwen3:4b-thinking-2507-q4_K_M";
 const DEFAULT_MAX_TURNS = 6;
 const DEFAULT_MAX_TOOL_CHARS = 20_000;
 
@@ -42,11 +44,7 @@ function retryDelay(response, attempt) {
 }
 
 function endpoint(baseUrl) {
-  const url = new URL(`${String(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}/chat/completions`);
-  if (!["https:", "http:"].includes(url.protocol)) throw new Error("LLM base URL must use http or https");
-  if (url.protocol === "http:" && !["localhost", "127.0.0.1", "::1"].includes(url.hostname)) {
-    throw new Error("Refusing to send an LLM API key over non-local plain HTTP");
-  }
+  const url = safeServiceUrl(`${String(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "")}/chat/completions`, "LLM");
   return url;
 }
 
@@ -59,7 +57,7 @@ async function completion({ baseUrl, apiKey, body, fetchImpl, retries = 2 }) {
       response = await fetchImpl(url, {
         method: "POST",
         headers: {
-          authorization: `Bearer ${apiKey}`,
+          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
           "content-type": "application/json",
           "user-agent": "kravel/0.1.0"
         },
@@ -178,7 +176,10 @@ export async function runTemporalAgent({
   fetchImpl = globalThis.fetch,
   onToolCall = () => {}
 }) {
-  if (!apiKey) throw new Error("No LLM API key supplied. Set GROQ_API_KEY or KRAVEL_LLM_API_KEY.");
+  const completionUrl = endpoint(baseUrl);
+  if (!apiKey && !isInternalHostname(completionUrl.hostname)) {
+    throw new Error("An API key is required for a non-local LLM endpoint");
+  }
   if (!incidentAt || !Number.isFinite(Date.parse(incidentAt))) throw new Error("incidentAt must be an RFC 3339 timestamp");
   if (baselineAt && !Number.isFinite(Date.parse(baselineAt))) throw new Error("baselineAt must be an RFC 3339 timestamp");
   if (typeof fetchImpl !== "function") throw new Error("fetch is unavailable");
@@ -190,12 +191,17 @@ export async function runTemporalAgent({
   const knownWindow = baselineAt
     ? `Known baseline: ${baselineAt}\nIncident observation: ${incidentAt}`
     : `Incident observation: ${incidentAt}`;
+  let inputGuardrailMs = 0;
+  const initialInput = guardModelInput({
+    target: "qwen",
+    maxCharacters: 8_000,
+    value: `${question}\n\nCluster: ${config.clusterId}\nNamespace: ${namespace || "all namespaces"}\n${knownWindow}`
+  });
+  inputGuardrailMs += initialInput.latencyMs;
+  const inputGuardrailFindings = [...initialInput.findings];
   const messages = [
     { role: "system", content: systemPrompt },
-    {
-      role: "user",
-      content: `${question}\n\nCluster: ${config.clusterId}\nNamespace: ${namespace || "all namespaces"}\n${knownWindow}`
-    }
+    { role: "user", content: initialInput.value }
   ];
 
   let toolCallsExecuted = 0;
@@ -213,7 +219,7 @@ export async function runTemporalAgent({
         tools,
         tool_choice: turn === 0 ? "required" : "auto",
         temperature: 0.1,
-        max_completion_tokens: 1_200
+        max_tokens: 1_200
       }
     });
     const message = completed.message;
@@ -228,7 +234,13 @@ export async function runTemporalAgent({
       const answer = textContent(message.content);
       if (!toolCallsExecuted) throw new Error("The model returned an answer without inspecting temporal evidence");
       if (!answer) throw new Error("The model returned neither tool calls nor a final answer");
-      return { answer, model, turns: turn + 1, toolCalls: toolCallsExecuted, modelMs, toolMs, usage };
+      return {
+        answer, model, turns: turn + 1, toolCalls: toolCallsExecuted, modelMs, toolMs, inputGuardrailMs, usage,
+        inputGuardrail: {
+          decision: inputGuardrailFindings.length ? "allow_with_redactions" : "allow",
+          findings: inputGuardrailFindings
+        }
+      };
     }
 
     for (const call of calls) {
@@ -248,11 +260,18 @@ export async function runTemporalAgent({
         toolMs += performance.now() - toolStarted;
       }
       toolCallsExecuted += 1;
+      const guardedToolResult = guardModelInput({
+        target: "qwen",
+        value: boundedToolResult(result, resultLimit),
+        maxCharacters: resultLimit
+      });
+      inputGuardrailMs += guardedToolResult.latencyMs;
+      inputGuardrailFindings.push(...guardedToolResult.findings);
       messages.push({
         role: "tool",
         tool_call_id: call.id,
         name,
-        content: boundedToolResult(result, resultLimit)
+        content: guardedToolResult.value
       });
     }
   }
@@ -270,7 +289,7 @@ export async function runTemporalAgent({
       tools,
       tool_choice: "none",
       temperature: 0.1,
-      max_completion_tokens: 1_200
+      max_tokens: 1_200
     }
   });
   const finalMessage = finalCompletion.message;
@@ -280,7 +299,13 @@ export async function runTemporalAgent({
   usage.totalTokens += Number(finalCompletion.usage.total_tokens) || 0;
   const answer = textContent(finalMessage.content);
   if (!answer) throw new Error("The model did not return a final answer after the tool-turn limit");
-  return { answer, model, turns: turnLimit + 1, toolCalls: toolCallsExecuted, modelMs, toolMs, usage };
+  return {
+    answer, model, turns: turnLimit + 1, toolCalls: toolCallsExecuted, modelMs, toolMs, inputGuardrailMs, usage,
+    inputGuardrail: {
+      decision: inputGuardrailFindings.length ? "allow_with_redactions" : "allow",
+      findings: inputGuardrailFindings
+    }
+  };
 }
 
 export const agentDefaults = {

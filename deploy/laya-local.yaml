@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kravel-ai
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: laya-model-cache
+  namespace: kravel-ai
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 3Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kravel-laya
+  namespace: kravel-ai
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kravel-laya
+  template:
+    metadata:
+      labels:
+        app: kravel-laya
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: laya
+          image: kravel-laya:local
+          imagePullPolicy: Never
+          env:
+            - name: LAYA_HOST
+              value: 0.0.0.0
+            - name: LAYA_PORT
+              value: "8000"
+            - name: LAYA_DEVICE
+              value: cpu
+            - name: LAYA_PRELOAD
+              value: "1"
+            - name: LAYA_MODELS
+              value: english
+            - name: LAYA_THREADS
+              value: "4"
+            - name: HF_HOME
+              value: /models/huggingface
+            - name: TORCH_HOME
+              value: /models/torch
+          ports:
+            - name: http
+              containerPort: 8000
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 210
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 768Mi
+            limits:
+              cpu: "4"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: laya-model-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kravel-laya
+  namespace: kravel-ai
+spec:
+  type: ClusterIP
+  selector:
+    app: kravel-laya
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

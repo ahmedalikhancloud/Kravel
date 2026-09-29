@@ -36,7 +36,7 @@ export function prometheusMetrics(store, clusterId) {
   }
 
   const lines = [
-    "# HELP kravel_benchmark_runs_total Number of recorded comparison flow runs.",
+    "# HELP kravel_benchmark_runs_total Number of recorded incident-pipeline runs.",
     "# TYPE kravel_benchmark_runs_total counter"
   ];
   for (const [key, value] of [...counts.entries()].sort()) {
@@ -45,7 +45,7 @@ export function prometheusMetrics(store, clusterId) {
   }
 
   lines.push(
-    "# HELP kravel_benchmark_latency_distribution_seconds Distribution of successful comparison latency by flow and phase.",
+    "# HELP kravel_benchmark_latency_distribution_seconds Distribution of successful pipeline latency by flow and phase.",
     "# TYPE kravel_benchmark_latency_distribution_seconds histogram"
   );
   const flows = [...new Set(runs.map((run) => run.flow))].sort();
@@ -76,7 +76,13 @@ export function prometheusMetrics(store, clusterId) {
     "# HELP kravel_benchmark_diagnosis_probability Latest Laya probability by incident class.",
     "# TYPE kravel_benchmark_diagnosis_probability gauge",
     "# HELP kravel_benchmark_confidence Latest aggregate classifier confidence.",
-    "# TYPE kravel_benchmark_confidence gauge"
+    "# TYPE kravel_benchmark_confidence gauge",
+    "# HELP kravel_pipeline_stage_latency_seconds Latest measured latency for each incident-pipeline stage.",
+    "# TYPE kravel_pipeline_stage_latency_seconds gauge",
+    "# HELP kravel_pipeline_stage_latency_distribution_seconds Distribution of incident-pipeline stage latency.",
+    "# TYPE kravel_pipeline_stage_latency_distribution_seconds histogram",
+    "# HELP kravel_pipeline_route_info Latest policy route and human-review state.",
+    "# TYPE kravel_pipeline_route_info gauge"
   );
 
   for (const run of [...latest.values()].sort((left, right) => left.flow.localeCompare(right.flow))) {
@@ -97,6 +103,26 @@ export function prometheusMetrics(store, clusterId) {
         lines.push(`kravel_benchmark_diagnosis_probability${labels({ flow: run.flow, diagnosis })} ${number(run.diagnosis[diagnosis])}`);
       }
     }
+    for (const [stage, milliseconds] of Object.entries(run.stageMetrics ?? {}).sort()) {
+      lines.push(`kravel_pipeline_stage_latency_seconds${labels({ flow: run.flow, stage })} ${number(milliseconds) / 1000}`);
+    }
+    if (run.route) {
+      lines.push(`kravel_pipeline_route_info${labels({ flow: run.flow, route: run.route, decision: run.decision, review_status: run.reviewStatus })} 1`);
+    }
+  }
+
+  const allStages = [...new Set(runs.flatMap((run) => Object.keys(run.stageMetrics ?? {})))].sort();
+  for (const stage of allStages) {
+    const values = runs
+      .map((run) => run.stageMetrics?.[stage])
+      .filter((value) => Number.isFinite(Number(value)))
+      .map((value) => Number(value) / 1000);
+    for (const upperBound of latencyBuckets) {
+      lines.push(`kravel_pipeline_stage_latency_distribution_seconds_bucket${labels({ stage, le: upperBound })} ${values.filter((value) => value <= upperBound).length}`);
+    }
+    lines.push(`kravel_pipeline_stage_latency_distribution_seconds_bucket${labels({ stage, le: "+Inf" })} ${values.length}`);
+    lines.push(`kravel_pipeline_stage_latency_distribution_seconds_sum${labels({ stage })} ${values.reduce((sum, value) => sum + value, 0)}`);
+    lines.push(`kravel_pipeline_stage_latency_distribution_seconds_count${labels({ stage })} ${values.length}`);
   }
   return `${lines.join("\n")}\n`;
 }

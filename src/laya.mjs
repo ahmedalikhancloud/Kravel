@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks";
+import { safeServiceUrl } from "./network-safety.mjs";
 
 export const incidentDiagnoses = [
   "config_regression",
@@ -47,11 +48,7 @@ export const layaQuestions = {
 };
 
 function endpoint(value) {
-  const url = new URL(String(value ?? ""));
-  if (!["https:", "http:"].includes(url.protocol)) throw new Error("Laya URL must use http or https");
-  if (url.protocol === "http:" && !["localhost", "127.0.0.1", "::1"].includes(url.hostname)) {
-    throw new Error("Refusing to send a Laya token over non-local plain HTTP");
-  }
+  const url = safeServiceUrl(value, "Laya");
   const path = url.pathname.replace(/\/+$/, "");
   url.pathname = path.endsWith("/v1/systemone") ? path : `${path}/v1/systemone`;
   return url;

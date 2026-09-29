@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { logComparisonToMlflow, MlflowClient } from "../src/mlflow.mjs";
+import { logPipelineToMlflow, MlflowClient } from "../src/mlflow.mjs";
 
-test("logs paired flow metrics to MLflow without payload evidence", async () => {
+test("logs pipeline and per-stage latency without evidence payloads", async () => {
   const requests = [];
   let runNumber = 0;
   const client = new MlflowClient({
@@ -21,30 +21,32 @@ test("logs paired flow metrics to MLflow without payload evidence", async () => 
     }
   });
 
-  await logComparisonToMlflow(client, {
-    comparisonId: "safe-comparison-id",
+  const logged = await logPipelineToMlflow(client, {
+    pipelineId: "safe-pipeline-id",
     scenario: "multi-incident",
-    runs: [{
-      flow: "laya_classifier",
-      provider: "laya",
-      model: "english",
-      status: "success",
-      totalMs: 50,
-      evidenceMs: 2,
-      modelMs: 48,
-      toolMs: null,
-      toolCalls: 0,
-      confidence: 0.9,
-      diagnosis: { config_regression: 0.95 },
-      errorCode: ""
-    }]
+    result: {
+      route: "qwen_investigation",
+      decision: "bad_image_rollout",
+      reviewStatus: "awaiting_human_review",
+      stageMetrics: { laya_input_guardrail: 1.2, laya_inference: 48, qwen_input_guardrail: 2.1 },
+      laya: { model: "english", confidence: 0.9, diagnosis: { bad_image_rollout: 0.95 } },
+      qwen: { model: "qwen-test", toolCalls: 2 },
+      guardrails: {
+        layaInput: { decision: "allow" },
+        layaOutput: { decision: "allow" },
+        qwenOutput: { decision: "allow_with_warnings" }
+      }
+    }
   });
 
+  assert.equal(logged.logged, true);
+  assert.ok(logged.mlflowMs >= 0);
   assert.equal(requests[0].method, "GET");
   assert.match(requests[0].url, /experiment_name=Kravel/);
   const serialized = JSON.stringify(requests);
-  assert.doesNotMatch(serialized, /STARTUP_MODE|Bearer|api[_-]?key|trycloudflare/i);
-  assert.match(serialized, /diagnosis\.config_regression/);
+  assert.doesNotMatch(serialized, /STARTUP_MODE|Bearer|api[_-]?key|system prompt/i);
+  assert.match(serialized, /laya_input_guardrail/);
+  assert.match(serialized, /diagnosis\.bad_image_rollout/);
 });
 
 test("rejects a remote plain-HTTP MLflow destination", () => {

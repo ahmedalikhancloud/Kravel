@@ -56,10 +56,19 @@ export function loadConfig() {
     embeddingUrl: process.env.KRAVEL_EMBEDDING_URL ?? "",
     embeddingModel: process.env.KRAVEL_EMBEDDING_MODEL ?? "",
     embeddingApiKey: process.env.KRAVEL_EMBEDDING_API_KEY ?? "",
-    llmBaseUrl: process.env.KRAVEL_LLM_BASE_URL ?? "https://api.groq.com/openai/v1",
-    llmModel: process.env.KRAVEL_LLM_MODEL ?? "openai/gpt-oss-20b",
-    llmApiKey: process.env.KRAVEL_LLM_API_KEY ?? process.env.GROQ_API_KEY ?? "",
+    llmBaseUrl: process.env.KRAVEL_LLM_BASE_URL ?? "http://model-runner.docker.internal/engines/v1",
+    llmModel: process.env.KRAVEL_LLM_MODEL ?? "ai/qwen3:4b-thinking-2507-q4_K_M",
+    llmApiKey: process.env.KRAVEL_LLM_API_KEY ?? "",
     llmMaxTurns: integer("KRAVEL_LLM_MAX_TURNS", 6),
+    layaUrl: process.env.KRAVEL_LAYA_URL ?? "http://kravel-laya.kravel-ai.svc.cluster.local:8000",
+    layaApiKey: process.env.KRAVEL_LAYA_API_KEY ?? "",
+    layaModel: process.env.KRAVEL_LAYA_MODEL ?? "english",
+    mlflowUrl: process.env.KRAVEL_MLFLOW_URL ?? "http://kravel-mlflow.kravel-observability.svc.cluster.local:5000",
+    policy: {
+      highConfidence: Number(process.env.KRAVEL_POLICY_HIGH_CONFIDENCE ?? 0.85),
+      minimumMargin: Number(process.env.KRAVEL_POLICY_MINIMUM_MARGIN ?? 0.2),
+      positiveThreshold: Number(process.env.KRAVEL_POLICY_POSITIVE_THRESHOLD ?? 0.65)
+    },
     kube: {
       host: process.env.KUBERNETES_SERVICE_HOST ?? "",
       port: integer("KUBERNETES_SERVICE_PORT_HTTPS", 443),

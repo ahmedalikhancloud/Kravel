@@ -46,7 +46,6 @@ spec:
             - --storage.tsdb.path=/prometheus
             - --storage.tsdb.retention.time=1h
             - --storage.tsdb.retention.size=128MB
-            - --web.enable-lifecycle
           ports:
             - name: http
               containerPort: 9090
@@ -57,12 +56,8 @@ spec:
             initialDelaySeconds: 2
             periodSeconds: 3
           resources:
-            requests:
-              cpu: 25m
-              memory: 64Mi
-            limits:
-              cpu: 300m
-              memory: 256Mi
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 300m, memory: 256Mi}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -128,79 +123,115 @@ data:
       "panels": [
         {
           "type": "stat",
-          "title": "Groq agent — latest end-to-end",
+          "title": "Observed pipeline total",
           "id": 1,
           "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_benchmark_latency_seconds{flow=\"groq_agent\",phase=\"end_to_end\"}", "refId": "A"}],
+          "targets": [{"expr": "kravel_benchmark_latency_seconds{flow=\"incident_pipeline\",phase=\"end_to_end\"}", "refId": "A"}],
           "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []},
           "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
         },
         {
           "type": "stat",
-          "title": "Laya classifier — latest end-to-end",
+          "title": "Laya inference",
           "id": 2,
           "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_benchmark_latency_seconds{flow=\"laya_classifier\",phase=\"end_to_end\"}", "refId": "A"}],
+          "targets": [{"expr": "kravel_pipeline_stage_latency_seconds{stage=\"laya_inference\"}", "refId": "A"}],
           "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []},
           "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
         },
         {
           "type": "stat",
-          "title": "Groq tool calls",
+          "title": "Qwen inference",
           "id": 3,
           "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_benchmark_tool_calls{flow=\"groq_agent\"}", "refId": "A"}],
+          "targets": [{"expr": "kravel_pipeline_stage_latency_seconds{stage=\"qwen_inference\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []},
           "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
         },
         {
           "type": "stat",
-          "title": "Recorded successful runs",
+          "title": "Qwen temporal tool calls",
           "id": 4,
           "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "sum(kravel_benchmark_runs_total{status=\"success\"})", "refId": "A"}],
+          "targets": [{"expr": "kravel_benchmark_tool_calls{flow=\"incident_pipeline\"}", "refId": "A"}],
           "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
         },
         {
-          "type": "timeseries",
-          "title": "Flow latency by phase",
+          "type": "bargauge",
+          "title": "Latest latency by pipeline stage",
           "id": 5,
-          "gridPos": {"h": 9, "w": 14, "x": 0, "y": 5},
+          "gridPos": {"h": 10, "w": 14, "x": 0, "y": 5},
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_benchmark_latency_seconds", "legendFormat": "{{flow}} / {{phase}}", "refId": "A"}],
-          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []}
+          "targets": [{"expr": "kravel_pipeline_stage_latency_seconds{flow=\"incident_pipeline\"}", "legendFormat": "{{stage}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 4}, "overrides": []},
+          "options": {"displayMode": "gradient", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
         },
         {
           "type": "bargauge",
-          "title": "Latest Laya diagnosis probabilities",
+          "title": "Laya diagnosis probabilities",
           "id": 6,
-          "gridPos": {"h": 9, "w": 10, "x": 14, "y": 5},
+          "gridPos": {"h": 10, "w": 10, "x": 14, "y": 5},
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_benchmark_diagnosis_probability{flow=\"laya_classifier\"}", "legendFormat": "{{diagnosis}}", "refId": "A"}],
+          "targets": [{"expr": "kravel_benchmark_diagnosis_probability{flow=\"incident_pipeline\"}", "legendFormat": "{{diagnosis}}", "refId": "A"}],
           "fieldConfig": {"defaults": {"min": 0, "max": 1, "unit": "percentunit"}, "overrides": []},
           "options": {"displayMode": "gradient", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
         },
         {
           "type": "timeseries",
-          "title": "Aggregate p95 end-to-end latency",
+          "title": "Guardrail latency",
           "id": 7,
-          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
+          "gridPos": {"h": 9, "w": 12, "x": 0, "y": 15},
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "histogram_quantile(0.95, sum by (flow, le) (kravel_benchmark_latency_distribution_seconds_bucket{phase=\"end_to_end\"}))", "legendFormat": "{{flow}}", "refId": "A"}],
-          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []}
+          "targets": [
+            {"expr": "kravel_pipeline_stage_latency_seconds{stage=\"laya_input_guardrail\"}", "legendFormat": "laya input", "refId": "A"},
+            {"expr": "kravel_pipeline_stage_latency_seconds{stage=\"laya_output_guardrail\"}", "legendFormat": "laya output", "refId": "B"},
+            {"expr": "kravel_pipeline_stage_latency_seconds{stage=\"qwen_input_guardrail\"}", "legendFormat": "qwen input", "refId": "C"},
+            {"expr": "kravel_pipeline_stage_latency_seconds{stage=\"qwen_output_guardrail\"}", "legendFormat": "qwen output", "refId": "D"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 5}, "overrides": []}
+        },
+        {
+          "type": "timeseries",
+          "title": "Aggregate p95 stage latency",
+          "id": 8,
+          "gridPos": {"h": 9, "w": 12, "x": 12, "y": 15},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"expr": "histogram_quantile(0.95, sum by (stage, le) (kravel_pipeline_stage_latency_distribution_seconds_bucket))", "legendFormat": "{{stage}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 4}, "overrides": []}
+        },
+        {
+          "type": "stat",
+          "title": "MLflow logging overhead",
+          "id": 9,
+          "gridPos": {"h": 5, "w": 6, "x": 18, "y": 24},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"expr": "kravel_pipeline_stage_latency_seconds{stage=\"mlflow_logging\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 4}, "overrides": []},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
+        },
+        {
+          "type": "stat",
+          "title": "Predefined read-only automation",
+          "id": 10,
+          "gridPos": {"h": 5, "w": 6, "x": 12, "y": 24},
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "targets": [{"expr": "kravel_pipeline_stage_latency_seconds{stage=\"predefined_automation\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "s", "decimals": 4}, "overrides": []},
+          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
         }
       ],
       "refresh": "2s",
       "schemaVersion": 41,
-      "tags": ["kravel", "benchmark"],
+      "tags": ["kravel", "local", "guardrails"],
       "templating": {"list": []},
       "time": {"from": "now-15m", "to": "now"},
       "timezone": "browser",
-      "title": "Kravel Flow Comparison",
-      "uid": "kravel-flow-comparison",
+      "title": "Kravel Local Incident Pipeline",
+      "uid": "kravel-local-pipeline",
       "version": 1
     }
 ---
@@ -248,12 +279,8 @@ spec:
             initialDelaySeconds: 3
             periodSeconds: 3
           resources:
-            requests:
-              cpu: 25m
-              memory: 96Mi
-            limits:
-              cpu: 300m
-              memory: 256Mi
+            requests: {cpu: 25m, memory: 96Mi}
+            limits: {cpu: 300m, memory: 256Mi}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -344,12 +371,8 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
           resources:
-            requests:
-              cpu: 50m
-              memory: 192Mi
-            limits:
-              cpu: 500m
-              memory: 512Mi
+            requests: {cpu: 50m, memory: 192Mi}
+            limits: {cpu: 500m, memory: 512Mi}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

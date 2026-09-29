@@ -19,7 +19,7 @@ function modelResponse(message) {
   });
 }
 
-test("hosted agent executes temporal tool calls and returns the model report", async () => {
+test("local Qwen-compatible agent executes guarded temporal tool calls and returns the model report", async () => {
   const store = new TemporalStore(":memory:");
   const requests = [];
   try {
@@ -108,6 +108,7 @@ test("hosted agent executes temporal tool calls and returns the model report", a
     assert.equal(requests[0].url, "https://llm.example/v1/chat/completions");
     assert.equal(requests[0].headers.authorization, "Bearer test-secret");
     assert.equal(requests[0].body.tool_choice, "required");
+    assert.equal(requests[0].body.max_tokens, 1_200);
     assert.equal(requests[0].body.tools.length, 4);
     assert.equal(requests[0].body.tools[0].function.parameters.properties.namespace, undefined);
     assert.equal(requests[0].body.tools[0].function.parameters.properties.cluster_id, undefined);
@@ -120,18 +121,18 @@ test("hosted agent executes temporal tool calls and returns the model report", a
   }
 });
 
-test("hosted agent refuses to run without an API key", async () => {
+test("agent refuses an unauthenticated remote endpoint while allowing local model runners", async () => {
   const store = new TemporalStore(":memory:");
   try {
     await assert.rejects(
       runTemporalAgent({
         store,
-        config: { clusterId: "test", llmApiKey: "", llmBaseUrl: "", llmModel: "" },
+        config: { clusterId: "test", llmApiKey: "", llmBaseUrl: "https://remote-model.example/v1", llmModel: "test" },
         embeddingClient: { enabled: false },
         incidentAt: "2026-09-28T12:05:00Z",
         apiKey: ""
       }),
-      /No LLM API key supplied/
+      /API key is required for a non-local LLM endpoint/
     );
   } finally {
     store.close();

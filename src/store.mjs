@@ -170,11 +170,24 @@ export class TemporalStore {
         tool_calls INTEGER NOT NULL DEFAULT 0,
         confidence REAL,
         diagnosis_json TEXT NOT NULL DEFAULT '{}',
-        error_code TEXT NOT NULL DEFAULT ''
+        error_code TEXT NOT NULL DEFAULT '',
+        route TEXT NOT NULL DEFAULT '',
+        decision TEXT NOT NULL DEFAULT '',
+        review_status TEXT NOT NULL DEFAULT '',
+        stage_metrics_json TEXT NOT NULL DEFAULT '{}'
       );
       CREATE INDEX IF NOT EXISTS idx_benchmark_time ON benchmark_runs(cluster_id, finished_at);
       CREATE INDEX IF NOT EXISTS idx_benchmark_flow ON benchmark_runs(cluster_id, flow, finished_at);
     `);
+    const benchmarkColumns = new Set(this.db.prepare("PRAGMA table_info(benchmark_runs)").all().map((column) => column.name));
+    for (const [name, definition] of [
+      ["route", "TEXT NOT NULL DEFAULT ''"],
+      ["decision", "TEXT NOT NULL DEFAULT ''"],
+      ["review_status", "TEXT NOT NULL DEFAULT ''"],
+      ["stage_metrics_json", "TEXT NOT NULL DEFAULT '{}'"]
+    ]) {
+      if (!benchmarkColumns.has(name)) this.db.exec(`ALTER TABLE benchmark_runs ADD COLUMN ${name} ${definition}`);
+    }
   }
 
   close() {
@@ -341,7 +354,11 @@ export class TemporalStore {
     toolCalls = 0,
     confidence = null,
     diagnosis = {},
-    errorCode = ""
+    errorCode = "",
+    route = "",
+    decision = "",
+    reviewStatus = "",
+    stageMetrics = {}
   }) {
     if (!comparisonId || !clusterId || !flow || !provider || !model) {
       throw new Error("comparisonId, clusterId, flow, provider, and model are required");
@@ -355,18 +372,28 @@ export class TemporalStore {
         .filter(([key, value]) => /^[a-z][a-z0-9_]{0,63}$/.test(key) && Number.isFinite(Number(value)))
         .map(([key, value]) => [key, Math.min(Math.max(Number(value), 0), 1)])
     );
+    const safeStageMetrics = Object.fromEntries(
+      Object.entries(stageMetrics ?? {})
+        .filter(([key, value]) => /^[a-z][a-z0-9_]{0,63}$/.test(key) && Number.isFinite(Number(value)) && Number(value) >= 0)
+        .map(([key, value]) => [key, Number(value)])
+    );
     const result = this.db.prepare(`
       INSERT INTO benchmark_runs (
         comparison_id, cluster_id, scenario, flow, provider, model, status,
         started_at, finished_at, total_ms, evidence_ms, model_ms, tool_ms,
-        tool_calls, confidence, diagnosis_json, error_code
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        tool_calls, confidence, diagnosis_json, error_code, route, decision,
+        review_status, stage_metrics_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       String(comparisonId), String(clusterId), String(scenario), String(flow), String(provider), String(model), status,
       toIso(startedAt, "benchmark startedAt"), toIso(finishedAt, "benchmark finishedAt"),
       finiteOrNull(totalMs), finiteOrNull(evidenceMs), finiteOrNull(modelMs), finiteOrNull(toolMs),
       Math.max(0, Number.parseInt(toolCalls, 10) || 0), finiteOrNull(confidence),
-      stableStringify(safeDiagnosis), String(errorCode).replace(/[^a-z0-9_-]/gi, "_").slice(0, 64)
+      stableStringify(safeDiagnosis), String(errorCode).replace(/[^a-z0-9_-]/gi, "_").slice(0, 64),
+      String(route).replace(/[^a-z0-9_-]/gi, "_").slice(0, 64),
+      String(decision).replace(/[^a-z0-9_-]/gi, "_").slice(0, 64),
+      String(reviewStatus).replace(/[^a-z0-9_-]/gi, "_").slice(0, 64),
+      stableStringify(safeStageMetrics)
     );
     return { id: Number(result.lastInsertRowid), comparisonId: String(comparisonId) };
   }
@@ -376,7 +403,8 @@ export class TemporalStore {
     return this.db.prepare(`
       SELECT comparison_id, cluster_id, scenario, flow, provider, model, status,
         started_at, finished_at, total_ms, evidence_ms, model_ms, tool_ms,
-        tool_calls, confidence, diagnosis_json, error_code
+        tool_calls, confidence, diagnosis_json, error_code, route, decision,
+        review_status, stage_metrics_json
       FROM benchmark_runs WHERE cluster_id = ?
       ORDER BY finished_at DESC, id DESC LIMIT ?
     `).all(clusterId, Math.min(Math.max(Number(limit) || 1000, 1), 10_000)).map((row) => ({
@@ -396,7 +424,11 @@ export class TemporalStore {
       toolCalls: row.tool_calls,
       confidence: row.confidence,
       diagnosis: parseJson(row.diagnosis_json, {}),
-      errorCode: row.error_code
+      errorCode: row.error_code,
+      route: row.route,
+      decision: row.decision,
+      reviewStatus: row.review_status,
+      stageMetrics: parseJson(row.stage_metrics_json, {})
     }));
   }
 
