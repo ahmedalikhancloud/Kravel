@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timezone
 
 from .kube import RESOURCE_MAP
+from .topology import build_connections, resource_key
 
 
 READ_ONLY_TOOLS = [
@@ -80,6 +81,8 @@ def discover_issues(kube, namespace: str) -> dict:
     started = time.perf_counter()
     pods = [pod for pod in kube.list_resources("pods", namespace, limit=200)["items"] if not pod.get("metadata", {}).get("deletionTimestamp")]
     deployments = kube.list_resources("deployments", namespace, limit=100)["items"]
+    pod_owners = {owner.get("name") for pod in pods for owner in pod.get("metadata", {}).get("ownerReferences", []) if owner.get("kind") == "ReplicaSet"}
+    replicasets = [obj for obj in kube.list_resources("replicasets", namespace, limit=200)["items"] if int(obj.get("spec", {}).get("replicas", 0) or 0) > 0 or obj.get("metadata", {}).get("name") in pod_owners]
     configmaps = kube.list_resources("configmaps", namespace, limit=100)["items"]
     services = kube.list_resources("services", namespace, limit=100)["items"]
     issues = []
@@ -147,6 +150,13 @@ def discover_issues(kube, namespace: str) -> dict:
             "health": "warning" if broken else "healthy", "ready": not broken,
             "issueType": "bad_configmap" if broken else "",
         })
+    for replicaset in replicasets:
+        name = replicaset.get("metadata", {}).get("name", "")
+        desired = int(replicaset.get("spec", {}).get("replicas", 0) or 0)
+        ready = int(replicaset.get("status", {}).get("readyReplicas", 0) or 0)
+        related_pods = [pod for pod in pods if any(owner.get("kind") == "ReplicaSet" and owner.get("name") == name for owner in pod.get("metadata", {}).get("ownerReferences", []))]
+        issue = next((issue_by_pod[pod["metadata"]["name"]] for pod in related_pods if pod["metadata"]["name"] in issue_by_pod), None)
+        resources.append({"kind": "ReplicaSet", "name": name, "namespace": namespace, "status": issue["title"] if issue else f"{ready}/{desired} ready", "health": issue["severity"] if issue else ("healthy" if ready == desired else "warning"), "ready": ready == desired, "issueType": issue["type"] if issue else ""})
     for service in services:
         name = service.get("metadata", {}).get("name", "")
         resources.append({
@@ -154,12 +164,17 @@ def discover_issues(kube, namespace: str) -> dict:
             "status": service.get("spec", {}).get("type", "ClusterIP"),
             "health": "healthy", "ready": True, "issueType": "",
         })
+    for resource in resources:
+        resource["id"] = resource_key(resource["kind"], resource["name"], namespace)
+    objects = [*({**obj, "kind": "Pod"} for obj in pods), *({**obj, "kind": "Deployment"} for obj in deployments), *({**obj, "kind": "ReplicaSet"} for obj in replicasets), *({**obj, "kind": "ConfigMap"} for obj in configmaps), *({**obj, "kind": "Service"} for obj in services)]
+    connections = build_connections(objects, namespace, {resource["id"] for resource in resources})
     return {
         "namespace": namespace,
         "observedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "podCount": len(pods),
-        "healthyPods": sum(1 for pod in pods if pod.get("status", {}).get("phase") == "Running" and all(item.get("ready") for item in pod.get("status", {}).get("containerStatuses", []))),
+        "healthyPods": sum(1 for pod in pods if pod.get("status", {}).get("phase") == "Running" and bool(pod.get("status", {}).get("containerStatuses")) and all(item.get("ready") for item in pod.get("status", {}).get("containerStatuses", []))),
         "issues": issues,
         "resources": resources,
+        "connections": connections,
         "durationMs": (time.perf_counter() - started) * 1000,
     }

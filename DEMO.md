@@ -68,10 +68,10 @@ The scenarios produce:
 
 ## 5. Show the investigation
 
-1. Refresh Kravel. The affected object glows amber or red in the 3D cluster arcade.
-2. Move the pointer over the board to tilt the view. Notice the custom Kravel pointer over the page and the hand pointer over interactive objects.
-3. Click a Pod, Deployment, or ConfigMap. Kravel scrolls smoothly to the read-only tool output and shows its live sanitized manifest.
-4. Click the incident in the left rail or ask Karl: `Diagnose every current failure. Use evidence and state uncertainty.`
+1. Refresh Kravel. The affected object's health ring and label turn amber or red in the 3D cluster observatory.
+2. Drag the scene to orbit, **Shift-drag** or select **Pan** to move sideways, and scroll over the scene to zoom. Use **Fit cluster** to reset the camera or expand the explorer for more room. With the canvas focused, arrow keys pan, **R** fits, and **F** focuses the selection.
+3. Follow the directional links: mint means controller ownership (Deployment → ReplicaSet → Pod), amber means ConfigMap references, and purple means Service selectors. These are observed Kubernetes relationships, not measured traffic. Click a model or its label to open the right-side Inspector; double-click to fly closer. Search and type filters narrow the view without resetting your camera.
+4. In the Inspector, switch between **Manifest**, **Describe**, **Events**, and **Logs**, or follow a connection to another resource. Logs belong only to the selected Pod or Pods connected to that resource. Current logs are the default; enable **Previous logs** for a restarted container. On a small screen the sidebar slides in and can be closed with **×**. The expandable keyboard resource directory offers an alternative to clicking models. Click an incident in the Incident desk, or open **Karl** and ask: `Diagnose every current failure. Use evidence and state uncertainty.`
 5. Karl calls only read tools and returns a grounded diagnosis. The UI shows Qwen latency, tool count, and trace ID.
 6. Choose **Propose fix**. The separate broker resolves the fixed repair, asks Kubernetes to perform a server dry-run, logs the proposal, and starts the five-minute timer.
 7. In Local Slack, inspect the exact command and expand **Inspect server dry-run output**. Click **👍 Approve**.
@@ -132,3 +132,5 @@ bash demo/local/demo.sh --connect-only
 ```
 
 Running `bash demo/local/demo.sh` without the flag starts a fresh healthy demo. If preparation fails, the script prints Pod details and recent container logs for the failing component.
+
+The 3D explorer requires browser WebGL support. If it is unavailable, Kravel clearly labels a resource-list fallback; inspection and approval safety remain unchanged. Live refreshes preserve your camera and selection. An offline banner means the displayed topology is the last known state, not a current health report.

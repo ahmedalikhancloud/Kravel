@@ -3,110 +3,54 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Kravel guarded Kubernetes debugger">
-  <title>Kravel · Guarded Kubernetes Debugger</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2307101f'/%3E%3Ccircle cx='27' cy='27' r='14' fill='none' stroke='%233ce8d0' stroke-width='5'/%3E%3Cpath d='M37 37l13 13M18 27h18M27 18v18' stroke='%23ffbd59' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+  <meta name="description" content="Kravel — a live 3D Kubernetes observatory and guarded debugger">
+  <title>Kravel · Cluster Observatory</title>
+  <link rel="icon" href="/ui/cursor-default.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/ui/app.css">
-  <script src="/ui/app.js" defer></script>
+  <script src="/ui/app.js" type="module"></script>
 </head>
 <body>
-  <div class="noise" aria-hidden="true"></div>
+  <a class="skip-link" href="#clusterWorld">Skip to cluster explorer</a>
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">⌕</span><div><strong>KRAVEL</strong><span>guarded Kubernetes debugger</span></div></div>
-    <div class="context"><span class="eyebrow">TARGET</span><select id="namespace" aria-label="Kubernetes namespace"><option value="kravel-demo">kravel-demo</option></select></div>
-    <div class="top-actions">
-      <span class="read-only"><i></i> AGENT READ-ONLY</span>
-      <a href="http://127.0.0.1:3000" target="_blank" rel="noreferrer">Grafana ↗</a>
-      <a href="http://127.0.0.1:5000" target="_blank" rel="noreferrer">MLflow ↗</a>
-      <button id="refresh" aria-label="Refresh cluster">↻</button>
-    </div>
+    <a class="brand" href="#overview" aria-label="Kravel overview"><span class="brand-mark">K<span>✦</span></span><span><strong>KRAVEL</strong><small>Cluster observatory</small></span></a>
+    <nav class="top-nav" aria-label="Page sections"><a href="#explorer">Explorer</a><a href="#incidents">Incidents</a><a href="#approvals">Approvals</a></nav>
+    <div class="top-actions"><span id="connectionStatus" class="live-status">Connecting</span><a href="http://127.0.0.1:3000" target="_blank" rel="noreferrer">Grafana ↗</a><a href="http://127.0.0.1:5000" target="_blank" rel="noreferrer">MLflow ↗</a><button id="openKarl" title="Open Karl assistant">✦ Karl</button><button id="refresh" class="icon-button" aria-label="Refresh cluster" title="Refresh cluster">↻</button></div>
   </header>
-
-  <main class="shell">
-    <aside class="left-rail panel">
-      <div class="section-heading"><div><span class="eyebrow">LIVE TRIAGE</span><h2>Detected problems</h2></div><span id="issueCount" class="count">0</span></div>
-      <div id="issueList" class="issue-list" aria-live="polite"></div>
-      <div class="lab-card">
-        <span class="eyebrow">DEMO LAB CONTROLS</span>
-        <h3>Break one thing on demand</h3>
-        <p>These commands run in your terminal—not through the agent.</p>
-        <div class="lab-actions">
-          <button data-copy="bash demo/local/scenario.sh break oom">OOMKilled</button>
-          <button data-copy="bash demo/local/scenario.sh break imagepull">ImagePull</button>
-          <button data-copy="bash demo/local/scenario.sh break crashloop">CrashLoop</button>
-          <button data-copy="bash demo/local/scenario.sh break configmap">ConfigMap</button>
-        </div>
-        <button class="reset-command" data-copy="bash demo/local/reset.sh">Copy healthy reset command</button>
-      </div>
-      <div class="rbac-card">
-        <span class="eyebrow">AUTHORITY SPLIT</span>
-        <div><b>Debugger SA</b><span>get · list · watch · logs</span></div>
-        <div><b>Broker SA</b><span>5 fixed demo objects only</span></div>
-        <div><b>Model</b><span>no mutation tool or approval token</span></div>
-      </div>
-    </aside>
-
+  <main id="overview" class="shell">
     <section class="workspace">
-      <section class="panel cluster-panel" aria-label="Current Kubernetes state">
-        <div class="cluster-heading">
-          <div><span class="eyebrow">LIVE CLUSTER ARCADE</span><h1 id="clusterTitle">Inspecting kravel-demo…</h1><p class="world-hint">Choose any object to open its live manifest. Drag your pointer across the board to move the camera.</p></div>
-          <div class="cluster-stats"><span><b id="healthyCount">—</b> healthy</span><span><b id="problemCount">—</b> problems</span><time id="observedAt">—</time></div>
-        </div>
-        <div id="clusterWorld" class="cluster-world" aria-label="Interactive 3D Kubernetes resource map">
-          <div class="world-sky" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-          <div class="world-grid" aria-hidden="true"></div>
-          <div class="world-hud"><span>READ-ONLY VIEW</span><b id="worldSelection">click a resource</b></div>
-          <div id="resourceWorld" class="resource-world"></div>
-        </div>
-        <div class="lab-strip-heading"><span>DEMO WORKLOADS</span><small>inspect or prepare an approval-gated repair</small></div>
-        <div id="workloadGrid" class="workload-grid"></div>
+      <div class="page-intro"><div><span class="eyebrow">YOUR LOCAL KUBERNETES UNIVERSE</span><h1>Your cluster. <span>In focus.</span></h1><p>Follow the connections. Find the fault. Keep the human in control.</p></div><div class="target-selector"><label for="namespace">NAMESPACE</label><select id="namespace"><option value="kravel-demo">kravel-demo</option></select></div></div>
+      <div id="connectionWarning" class="notice" role="status" hidden></div>
+      <section class="overview-grid" aria-label="Live cluster summary">
+        <div class="stat-card"><span class="stat-symbol mint">◈</span><div><span>Healthy Pods</span><strong id="healthyCount">—</strong></div><small id="podTotal">Waiting for cluster</small></div>
+        <div class="stat-card"><span class="stat-symbol blue">⬡</span><div><span>Live objects</span><strong id="resourceCount">—</strong></div><small id="linkCount">Observed relationships</small></div>
+        <div class="stat-card"><span class="stat-symbol amber">⌁</span><div><span>Open incidents</span><strong id="problemCount">—</strong></div><small id="healthSummary">Checking health</small></div>
       </section>
-
-      <section id="toolPanel" class="panel tool-panel">
-        <div class="section-heading"><div><span class="eyebrow">READ-ONLY TOOLBELT</span><h2>kubectl-shaped evidence</h2></div><span id="toolTiming" class="timing">no call yet</span></div>
-        <div class="tool-tabs" role="tablist">
-          <button role="tab" data-tool="get_pods" class="active">get pods</button>
-          <button role="tab" data-tool="get_resource">manifest</button>
-          <button role="tab" data-tool="get_events">events</button>
-          <button role="tab" data-tool="describe_resource">describe</button>
-          <button role="tab" data-tool="pod_logs">logs</button>
+      <section id="explorer" class="panel cluster-panel" aria-label="Live 3D cluster explorer">
+        <div class="panel-heading"><div><span class="eyebrow">EXPLORE / CONNECT / INSPECT</span><h2 id="clusterTitle">Cluster explorer</h2></div><span class="read-only"><i></i> Read-only view</span></div>
+        <div class="explorer-toolbar"><label class="search-field"><span>⌕</span><input id="resourceSearch" type="search" placeholder="Find a resource…" aria-label="Search cluster resources"><kbd>/</kbd></label><div id="resourceFilters" class="filter-group" aria-label="Resource type filters"><button data-kind="all" aria-pressed="true">All</button><button data-kind="Pod" aria-pressed="false">Pods</button><button data-kind="controllers" aria-pressed="false">Controllers</button><button data-kind="ConfigMap" aria-pressed="false">ConfigMaps</button><button data-kind="Service" aria-pressed="false">Services</button></div></div>
+        <div id="clusterWorld" class="cluster-world" aria-label="Navigable 3D Kubernetes scene">
+          <div id="sceneCanvas" class="scene-canvas"></div><div id="resourceWorld" class="resource-world" aria-label="Select a cluster resource"></div>
+          <div class="world-hud"><span><i></i> LIVE TOPOLOGY</span><span id="viewSummary">Loading resources…</span></div>
+          <div id="sceneEmpty" class="scene-empty" hidden>No resources match. Clear the search or choose All.</div>
+          <div class="scene-controls" aria-label="3D view controls"><div class="segmented"><button id="orbitMode" aria-label="Orbit camera" aria-pressed="true" title="Drag to orbit">↻ Orbit</button><button id="panMode" aria-label="Pan camera" aria-pressed="false" title="Drag to pan">✥ Pan</button></div><div class="control-row"><button id="zoomIn" aria-label="Zoom in" title="Zoom in">+</button><button id="zoomOut" aria-label="Zoom out" title="Zoom out">−</button><button id="fitScene" aria-label="Fit cluster in view" title="Fit cluster · R">⌖</button><button id="focusResource" aria-label="Focus selected resource" title="Focus selected · F" disabled>◎</button><button id="fullscreenScene" aria-label="Expand cluster explorer" title="Expand view">⛶</button></div></div>
+          <div class="scene-footer"><span>Drag to orbit · Shift-drag to pan · Scroll to zoom</span><span id="cameraReadout">3D view</span></div>
         </div>
-        <pre id="toolOutput" class="terminal-output" tabindex="0">Select a problem or run a read-only tool.</pre>
+        <div class="explorer-bottom"><div class="connection-legend"><label><input id="showConnections" type="checkbox" checked> Connections</label><span><i class="owns"></i> Owns</span><span><i class="configures"></i> Configures</span><span><i class="selects"></i> Selects</span></div><span class="observed">Updated <time id="observedAt">—</time></span></div>
+        <details class="resource-directory"><summary>Browse resources with keyboard <span id="directoryCount"></span></summary><div id="resourceDirectory"></div></details>
+        <p class="topology-note">Links come from live owner references, ConfigMap references, and Service selectors—not measured network traffic.</p>
       </section>
-
-      <section class="panel approval-panel">
-        <div class="section-heading">
-          <div><span class="eyebrow">HUMAN CHANGE GATE</span><h2>Approval queue</h2></div>
-          <a class="slack-link" href="http://127.0.0.1:8081" target="_blank" rel="noreferrer">Open local Slack ↗</a>
-        </div>
-        <div class="approval-flow" aria-label="Guarded execution flow">
-          <span>01 Proposal</span><i>→</i><span>02 Server dry-run</span><i>→</i><span>03 Human 👍</span><i>→</i><span>04 Broker executes</span>
-        </div>
-        <div id="proposalList" class="proposal-list"></div>
-      </section>
-
-      <section class="panel audit-panel">
-        <div class="section-heading"><div><span class="eyebrow">IMMUTABLE-EVENT STYLE LOG</span><h2>Audit trail</h2></div><span class="count" id="auditCount">0</span></div>
-        <div id="auditList" class="audit-list"></div>
-      </section>
+      <section id="incidents" class="panel incident-panel"><div class="panel-heading"><div><span class="eyebrow">SIGNAL, NOT NOISE</span><h2>Incident desk</h2></div><span id="issueCount" class="count">0</span></div><div id="issueList" class="issue-list" aria-live="polite"></div><div class="lab-strip-heading"><span>DEMO SANDBOX</span><small>Break commands are copied, never executed by Karl.</small></div><div id="workloadGrid" class="workload-grid"></div><div class="lab-actions"><button data-copy="bash demo/local/scenario.sh break oom">Copy OOM lab</button><button data-copy="bash demo/local/scenario.sh break imagepull">Copy ImagePull lab</button><button data-copy="bash demo/local/scenario.sh break crashloop">Copy CrashLoop lab</button><button data-copy="bash demo/local/scenario.sh break configmap">Copy ConfigMap lab</button><button class="reset-command" data-copy="bash demo/local/reset.sh">↻ Copy healthy reset</button></div></section>
+      <section id="approvals" class="panel approval-panel"><div class="panel-heading"><div><span class="eyebrow">A HUMAN AT THE HELM</span><h2>Change requests <span id="approvalCount" class="inline-count">0</span></h2></div><a class="slack-link" href="http://127.0.0.1:8081" target="_blank" rel="noreferrer">Approval inbox ↗</a></div><div class="approval-flow"><span>01 Propose</span><i>→</i><span>02 Server dry-run</span><i>→</i><span>03 Human 👍 · 5 min</span><i>→</i><span>04 Broker executes</span></div><div id="proposalList" class="proposal-list"></div><p class="panel-note">Open the credential-bearing inbox URL printed by the demo launcher to approve. Karl never receives that credential.</p></section>
+      <section class="panel audit-panel"><div class="panel-heading"><div><span class="eyebrow">EVERY ACTION, ACCOUNTED FOR</span><h2>Audit trail</h2></div><span id="auditCount" class="count">0</span></div><div id="auditList" class="audit-list"></div></section>
+      <footer class="page-footer"><span>KRAVEL <i>✦</i> Evidence first. Changes gated.</span><span>Local Qwen · LangGraph · Least-privilege RBAC</span></footer>
     </section>
-
-    <aside class="right-rail panel">
-      <div class="karl-header">
-        <img src="/ui/karl-debugger.png" alt="Karl, Kravel's pixel-art Kubernetes debugger">
-        <div><span class="eyebrow">READ-ONLY COPILOT</span><h2>Karl <i></i></h2><p>Evidence first. Changes gated.</p></div>
-      </div>
-      <div id="chat" class="chat" aria-label="Conversation with Karl"></div>
-      <div id="quickActions" class="quick-actions"></div>
-      <form id="chatForm" class="composer">
-        <label for="chatInput">Message Karl</label>
-        <textarea id="chatInput" rows="3" placeholder="Why is image-demo failing? Check Events and logs…"></textarea>
-        <button type="submit">Investigate</button>
-      </form>
-      <p class="safety-note">⌾ Karl can investigate and propose an allowlisted fix. Only the isolated broker can mutate—and only after a human thumbs-up.</p>
+    <aside class="right-rail panel" aria-label="Resource inspector and Karl assistant">
+      <div class="rail-tabs" role="tablist" aria-label="Sidebar views"><button id="inspectorTab" role="tab" aria-selected="true" aria-controls="inspectorView" tabindex="0">◈ Inspector</button><button id="karlTab" role="tab" aria-selected="false" aria-controls="karlView" tabindex="-1">✦ Ask Karl</button><button id="closeRail" class="mobile-close" aria-label="Close sidebar">×</button></div>
+      <section id="inspectorView" role="tabpanel" aria-labelledby="inspectorTab" class="rail-view"><div id="inspectorEmpty" class="inspector-empty"><div class="empty-orbit">⬡<i>◈</i></div><h2>Pick an object.</h2><p>Click a 3D model or its label to inspect its manifest, evidence, and connections.</p><span class="hint-chip">Double-click a model to fly closer</span></div><div id="inspectorContent" class="inspector-content" hidden><div class="resource-heading"><div><span id="selectedKind" class="eyebrow"></span><h2 id="selectedName"></h2><span id="selectedStatus" class="health-tag"></span></div><button id="clearSelection" class="icon-button" aria-label="Clear resource selection">×</button></div><p id="selectedNamespace" class="panel-note"></p><div class="resource-actions"><button id="diagnoseSelected">✦ Ask Karl about this</button><button id="focusSelected">◎ Fly to resource</button></div><div class="relationship-heading"><span>CONNECTIONS</span><span id="relatedCount">0</span></div><div id="relatedResources" class="related-resources"></div><section id="toolPanel" class="tool-panel"><div class="tool-tabs" role="tablist" aria-label="Evidence type"><button role="tab" data-tool="get_resource" aria-selected="true" tabindex="0" class="active">Manifest</button><button role="tab" data-tool="describe_resource" aria-selected="false" tabindex="-1">Describe</button><button role="tab" data-tool="get_events" aria-selected="false" tabindex="-1">Events</button><button role="tab" data-tool="pod_logs" aria-selected="false" tabindex="-1">Logs</button></div><div class="tool-meta"><span id="toolTiming">No read yet</span><label id="logModeControl" hidden><input id="previousLogs" type="checkbox"> Previous logs</label><button id="copyEvidence" aria-label="Copy evidence output" title="Copy evidence">⧉</button></div><pre id="toolOutput" class="terminal-output" tabindex="0" aria-label="Read-only Kubernetes evidence">Choose an evidence tool.</pre></section></div></section>
+      <section id="karlView" role="tabpanel" aria-labelledby="karlTab" class="rail-view" hidden><div class="karl-header"><img src="/ui/karl-debugger.png" alt="Karl, the pixel Kubernetes debugger"><div><span class="eyebrow">YOUR READ-ONLY COPILOT</span><h2>Karl <i></i></h2><p>Curious by design. Safe by default.</p></div></div><div id="chat" class="chat" role="log" aria-live="polite" aria-label="Conversation with Karl"></div><div id="quickActions" class="quick-actions"></div><form id="chatForm" class="composer"><label class="sr-only" for="chatInput">Message Karl</label><textarea id="chatInput" rows="3" placeholder="What’s going on in my cluster?"></textarea><div><span id="chatProgress" role="status">Enter to send · Shift+Enter for a new line</span><button id="chatSend" type="submit">Investigate ↗</button></div></form></section>
+      <div class="safety-note"><span>⌾</span><p>Agent: read-only. Broker: 5 fixed demo objects, only after human approval.</p></div>
     </aside>
   </main>
-
-  <div id="toast" role="status"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

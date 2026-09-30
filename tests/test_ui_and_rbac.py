@@ -10,10 +10,15 @@ def test_cluster_arcade_contains_real_resource_controls_and_custom_cursors():
     js = (ROOT / "kravel" / "web" / "app.js").read_text(encoding="utf-8")
 
     assert 'id="clusterWorld"' in html and 'id="resourceWorld"' in html
-    assert ".iso-cube" in css and ".config-slab" in css and ".pod-shell" in css and ".service-ring" in css
+    scene = (ROOT / "kravel" / "web" / "scene.js").read_text(encoding="utf-8")
+    assert "WebGLRenderer" in scene and "OrbitControls" in scene
+    assert "CapsuleGeometry" in scene and "TubeGeometry" in scene and "Raycaster" in scene
+    assert 'id="showConnections"' in html and 'id="resourceSearch"' in html
+    assert 'role="tablist"' in html and "prefers-reduced-motion" in css
     assert "cursor-pointer.svg" in css
-    assert 'runTool("get_resource", true)' in js
-    assert "innerHTML" not in js
+    assert 'runTool(tool)' in js and "AbortController" in js
+    assert "innerHTML" not in js and "innerHTML" not in scene
+    assert "./vendor/three.module.min.js" in scene and "https://" not in scene
 
 
 def test_agent_and_broker_have_separate_least_privilege_roles():

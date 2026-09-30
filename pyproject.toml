@@ -24,7 +24,7 @@ kravel = "kravel.cli:main"
 include = ["kravel*"]
 
 [tool.setuptools.package-data]
-kravel = ["web/*"]
+kravel = ["web/*", "web/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

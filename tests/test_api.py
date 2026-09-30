@@ -61,3 +61,16 @@ def test_broker_rejects_missing_approval_credential(monkeypatch):
         assert post(base, "/v1/proposals/id/approve", {})[0] == 401
         assert post(base, "/v1/proposals/id/approve", {}, {"X-Kravel-Approval-Token": "incorrect"})[0] == 401
     assert sum(item["action"] == "approval.denied" for item in store.audit_entries()) == 2
+
+
+def test_local_3d_assets_are_served_with_strict_csp_without_remote_scripts():
+    config = load_config()
+    config.host, config.port = "127.0.0.1", 0
+    with serving(create_server(AuditStore(), config, object())) as base:
+        for path in ("/ui/scene.js", "/ui/topology.mjs", "/ui/vendor/three.module.min.js", "/ui/vendor/three.core.min.js", "/ui/vendor/OrbitControls.js"):
+            with urllib.request.urlopen(base + path) as response:
+                assert response.status == 200
+                assert "text/javascript" in response.headers["Content-Type"]
+                assert "script-src 'self'" in response.headers["Content-Security-Policy"]
+                assert "unsafe-inline" not in response.headers["Content-Security-Policy"]
+                assert len(response.read()) > 100

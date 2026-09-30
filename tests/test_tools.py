@@ -14,6 +14,8 @@ class FakeKube:
             ]}
         if kind == "deployments":
             return {"items": [self.deployment(name) for name in ("oom-demo", "image-demo", "crash-demo", "config-demo")]}
+        if kind == "replicasets":
+            return {"items": []}
         if kind == "configmaps":
             return {"items": [{"metadata": {"name": "config-demo"}, "data": {"MODE": "broken"}}, {"metadata": {"name": "kube-root-ca.crt"}, "data": {"ca.crt": "redacted"}}]}
         if kind == "services":
@@ -85,3 +87,34 @@ def test_deleted_pods_do_not_leave_ghost_failures():
     result = discover_issues(DeletingKube(), "kravel-demo")
     assert result["podCount"] == 0
     assert all(item["type"] == "bad_configmap" for item in result["issues"])
+
+
+def test_snapshot_includes_active_replicasets_and_real_owner_edges_not_old_empty_revisions():
+    class OwnedKube(FakeKube):
+        def list_resources(self, kind, namespace, **kwargs):
+            if kind == "replicasets":
+                return {"items": [
+                    {"metadata": {"name": "oom-revision", "uid": "rs1", "ownerReferences": [{"kind": "Deployment", "name": "oom-demo", "controller": True}]}, "spec": {"replicas": 1}},
+                    {"metadata": {"name": "old-empty"}, "spec": {"replicas": 0}},
+                ]}
+            result = super().list_resources(kind, namespace, **kwargs)
+            if kind == "pods":
+                result["items"][0]["metadata"]["ownerReferences"] = [{"kind": "ReplicaSet", "name": "oom-revision", "uid": "rs1", "controller": True}]
+            return result
+    snapshot = discover_issues(OwnedKube(), "kravel-demo")
+    assert [item["name"] for item in snapshot["resources"] if item["kind"] == "ReplicaSet"] == ["oom-revision"]
+    assert len(snapshot["connections"]) == 2
+    assert any(edge["source"] == "kravel-demo/ReplicaSet/oom-revision" and edge["target"] == "kravel-demo/Pod/oom-demo-a" for edge in snapshot["connections"])
+
+
+def test_running_pod_without_container_status_is_not_counted_as_healthy():
+    class UnknownKube(FakeKube):
+        def list_resources(self, kind, namespace, **kwargs):
+            result = super().list_resources(kind, namespace, **kwargs)
+            if kind == "pods":
+                for pod in result["items"]:
+                    pod["status"]["containerStatuses"] = []
+            return result
+    snapshot = discover_issues(UnknownKube(), "kravel-demo")
+    assert snapshot["healthyPods"] == 0
+    assert not any(item["ready"] for item in snapshot["resources"] if item["kind"] == "Pod")

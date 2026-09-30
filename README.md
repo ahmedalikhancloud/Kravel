@@ -2,7 +2,7 @@
 
 Kravel is a local, guarded Kubernetes debugger built for a live demo. Karl—the pixel-art copilot—can inspect Pods, controllers, ConfigMaps, Events, and bounded logs through a strictly read-only ServiceAccount. A separate approval broker can repair four disposable demo failures, but only after Kubernetes server-side dry-run succeeds and a human approves within five minutes.
 
-The main browser UI renders the live namespace as an interactive CSS-3D cluster arcade. Click a Pod, Deployment, ConfigMap, or Service to load its sanitized manifest through the same audited read-only tool API used by the agent.
+The main browser UI renders the live namespace as a navigable WebGL 3D observatory. Orbit, pan, scroll to zoom, and click a Pod, Deployment, ReplicaSet, ConfigMap, or Service to inspect its sanitized manifest, Events, describe output, and connected Pod logs. Directional links use actual controller owner references, ConfigMap references, and Service selectors; they do not claim measured network traffic. All graphics libraries are bundled locally—no CDN, external fonts, or new credentials.
 
 ## What is included
 
@@ -89,6 +89,8 @@ All port-forwards bind only to `127.0.0.1`.
 python -m pytest
 bash -n demo/local/*.sh
 node --check kravel/web/app.js
+node --check kravel/web/scene.js
+node --test tests/topology.test.mjs
 node --check kravel/web/slack.js
 ```
 

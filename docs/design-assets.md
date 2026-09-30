@@ -1,6 +1,6 @@
 # Karl debugger artwork
 
-The project-bound sprite is `kravel/web/karl-debugger.png`. It was made with the built-in image-generation tool in edit mode, using the earlier Karl sprite as the edit target. Its transparent background is preserved. The resource models and mouse cursors are native CSS/SVG rather than generated bitmap mockups.
+The project-bound sprite is `kravel/web/karl-debugger.png`. It was made with the built-in image-generation tool in edit mode, using the earlier Karl sprite as the edit target. Its transparent background is preserved. The resource models are native Three.js geometry (capsules, cubes, slabs, and rings), not generated bitmap mockups. Mouse cursors are local SVG assets. No new image assets were generated for the WebGL redesign.
 
 Final artwork prompt:
 
