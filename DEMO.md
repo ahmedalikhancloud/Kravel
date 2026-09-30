@@ -11,36 +11,24 @@ In Docker Desktop:
 3. Enable Model Runner's localhost TCP access on port `12434`.
 4. Give Docker Desktop at least 8 GB memory if available; Kravel itself is light, while Qwen and the observability containers use most of the allocation.
 
-Install Git for Windows. You can stay in PowerShell or Command Prompt—the `.cmd` launchers find Git Bash automatically and do not require changing PowerShell's script execution policy.
+Install Git for Windows, which includes Git Bash. Open the Kravel folder in File Explorer, right-click, and choose **Open Git Bash here** (under **Show more options** if needed).
 
-### Prefer Bash throughout?
-
-Open the Kravel folder in File Explorer, right-click, and choose **Open Git Bash here** (under **Show more options** if needed). Every implementation script is Bash; the `.cmd` files are optional Windows launchers.
-
-```bash
-bash demo/local/prepare.sh                  # one-time setup
-bash demo/local/demo.sh                     # start a clean demo
-bash demo/local/scenario.sh break imagepull  # break one lab
-bash demo/local/reset.sh                    # restore all labs
-bash demo/local/demo.sh --connect-only      # reconnect pages, preserve labs
-```
-
-The scripts resolve their repository paths themselves. No PowerShell policy change or Linux-side installation of Docker is required.
+Run every terminal command below in that Git Bash window, from the repository directory. All examples use Bash scripts and forward-slash paths. The scripts resolve their repository paths themselves. No PowerShell policy change or Linux-side installation of Docker is required.
 
 ## 2. Prepare everything
 
 From the repository directory:
 
-```bat
-demo\local\prepare.cmd
+```bash
+bash demo/local/prepare.sh
 ```
 
 This downloads and warms the fast Qwen 4B instruct profile, builds Kravel, removes the old Laya namespace and image, installs the split ServiceAccounts, and starts Prometheus, Grafana, and MLflow. The first run takes the longest because container images and the model must be downloaded.
 
 ## 3. Start a clean demo
 
-```bat
-demo\local\demo.cmd
+```bash
+bash demo/local/demo.sh
 ```
 
 The command recreates `kravel-demo` in a healthy state and prints these pages:
@@ -56,17 +44,17 @@ Open Kravel and Local Slack in separate browser tabs. The credential disappears 
 
 Pick any one:
 
-```bat
-demo\local\scenario.cmd break oom
-demo\local\scenario.cmd break imagepull
-demo\local\scenario.cmd break crashloop
-demo\local\scenario.cmd break configmap
+```bash
+bash demo/local/scenario.sh break oom
+bash demo/local/scenario.sh break imagepull
+bash demo/local/scenario.sh break crashloop
+bash demo/local/scenario.sh break configmap
 ```
 
 Or break all four at once:
 
-```bat
-demo\local\scenario.cmd break all
+```bash
+bash demo/local/scenario.sh break all
 ```
 
 The scenarios produce:
@@ -110,20 +98,20 @@ In MLflow, open the **Kravel Guarded Debugger** experiment, then open an investi
 
 Restore all four labs while keeping Kravel and the dashboards online:
 
-```bat
-demo\local\reset.cmd
+```bash
+bash demo/local/reset.sh
 ```
 
 Restore only one lab:
 
-```bat
-demo\local\scenario.cmd reset imagepull
+```bash
+bash demo/local/scenario.sh reset imagepull
 ```
 
 Remove the entire disposable installation and stop its port-forwards:
 
-```bat
-demo\local\reset.cmd --full
+```bash
+bash demo/local/reset.sh --full
 ```
 
 The full reset leaves downloaded images and Qwen cached so the next setup is faster.
@@ -132,9 +120,15 @@ The full reset leaves downloaded images and Qwen cached so the next setup is fas
 
 Check the current state:
 
-```bat
-demo\local\scenario.cmd status
+```bash
+bash demo/local/scenario.sh status
 kubectl get pods -A
 ```
 
-If a page is not reachable, run `demo\local\demo.cmd --connect-only`; it replaces the localhost port-forwards without resetting the labs. Running `demo.cmd` without the flag starts a fresh healthy demo. If preparation fails, the script prints Pod details and recent container logs for the failing component.
+If a page is not reachable, reconnect the localhost port-forwards without resetting the labs:
+
+```bash
+bash demo/local/demo.sh --connect-only
+```
+
+Running `bash demo/local/demo.sh` without the flag starts a fresh healthy demo. If preparation fails, the script prints Pod details and recent container logs for the failing component.
