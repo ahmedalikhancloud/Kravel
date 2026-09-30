@@ -13,6 +13,20 @@ In Docker Desktop:
 
 Install Git for Windows. You can stay in PowerShell or Command Prompt—the `.cmd` launchers find Git Bash automatically and do not require changing PowerShell's script execution policy.
 
+### Prefer Bash throughout?
+
+Open the Kravel folder in File Explorer, right-click, and choose **Open Git Bash here** (under **Show more options** if needed). Every implementation script is Bash; the `.cmd` files are optional Windows launchers.
+
+```bash
+bash demo/local/prepare.sh                  # one-time setup
+bash demo/local/demo.sh                     # start a clean demo
+bash demo/local/scenario.sh break imagepull  # break one lab
+bash demo/local/reset.sh                    # restore all labs
+bash demo/local/demo.sh --connect-only      # reconnect pages, preserve labs
+```
+
+The scripts resolve their repository paths themselves. No PowerShell policy change or Linux-side installation of Docker is required.
+
 ## 2. Prepare everything
 
 From the repository directory:
