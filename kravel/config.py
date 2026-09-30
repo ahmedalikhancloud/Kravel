@@ -46,6 +46,8 @@ class Config:
     approval_token: str
     slack_bot_token: str
     slack_channel_id: str
+    operator_token: str = ""
+    operator_url: str = ""
     kube: KubeConfig = field(default_factory=KubeConfig)
 
 
@@ -71,6 +73,8 @@ def load_config() -> Config:
         approval_token=os.getenv("KRAVEL_APPROVAL_TOKEN", ""),
         slack_bot_token=os.getenv("SLACK_BOT_TOKEN", ""),
         slack_channel_id=os.getenv("SLACK_CHANNEL_ID", ""),
+        operator_token=os.getenv("KRAVEL_OPERATOR_TOKEN", ""),
+        operator_url=os.getenv("KRAVEL_OPERATOR_URL", ""),
         kube=KubeConfig(
             host=os.getenv("KUBERNETES_SERVICE_HOST", ""),
             port=_integer("KUBERNETES_SERVICE_PORT_HTTPS", 443),

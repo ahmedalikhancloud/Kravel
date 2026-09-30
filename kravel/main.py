@@ -11,6 +11,7 @@ from .cli import main as cli_main
 from .config import load_config
 from .kube import KubernetesClient
 from .store import AuditStore
+from .operator import OperatorConsole, create_operator_server
 
 
 def main(argv=None):
@@ -18,13 +19,13 @@ def main(argv=None):
     command = argv[0] if argv else "serve"
     if command in {"check-llm", "inspect"}:
         return cli_main(argv)
-    if command not in {"serve", "broker"}:
+    if command not in {"serve", "broker", "operator"}:
         raise SystemExit(f"Unknown command: {command}")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     config = load_config()
     store = AuditStore(config.db_path)
     kube = KubernetesClient(config.kube)
-    server = create_server(store, config, kube) if command == "serve" else create_broker_server(ApprovalBroker(kube, store, config), config)
+    server = create_server(store, config, kube) if command == "serve" else create_operator_server(OperatorConsole(kube, store), config) if command == "operator" else create_broker_server(ApprovalBroker(kube, store, config), config)
 
     def shutdown(_signum=None, _frame=None):
         threading.Thread(target=server.shutdown, daemon=True).start()
@@ -33,8 +34,12 @@ def main(argv=None):
     signal.signal(signal.SIGINT, shutdown)
     try:
         logging.info("%s listening on %s:%s", command, config.host, config.port)
+        if hasattr(server, "workflows"):
+            server.workflows.start_observer()
         server.serve_forever()
     finally:
+        if hasattr(server, "workflows"):
+            server.workflows.stop.set()
         server.server_close()
         store.close()
     return 0

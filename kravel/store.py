@@ -75,6 +75,17 @@ class AuditStore:
                   slack_ts TEXT NOT NULL DEFAULT ''
                 );
                 CREATE INDEX IF NOT EXISTS idx_proposals_created ON proposals(created_at DESC);
+                CREATE TABLE IF NOT EXISTS workflows (
+                  id TEXT PRIMARY KEY, kind TEXT NOT NULL, namespace TEXT NOT NULL,
+                  target TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL,
+                  finished_at TEXT NOT NULL DEFAULT '', payload_json TEXT NOT NULL DEFAULT '{}'
+                );
+                CREATE TABLE IF NOT EXISTS workflow_steps (
+                  run_id TEXT NOT NULL, step_key TEXT NOT NULL, ordinal INTEGER NOT NULL,
+                  label TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL,
+                  finished_at TEXT NOT NULL DEFAULT '', duration_ms REAL NOT NULL DEFAULT 0,
+                  details_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(run_id, step_key)
+                );
                 """
             )
             columns = {row[1] for row in self.connection.execute("PRAGMA table_info(investigations)").fetchall()}
@@ -85,6 +96,51 @@ class AuditStore:
     def close(self):
         with self.lock:
             self.connection.close()
+
+    def start_workflow(self, run_id, kind, namespace, target=""):
+        with self.lock, self.connection:
+            self.connection.execute("INSERT OR IGNORE INTO workflows(id,kind,namespace,target,status,started_at) VALUES (?,?,?,?,?,?)", (run_id, kind, namespace, target, "running", to_iso()))
+        return self.workflow(run_id)
+
+    def workflow_step(self, run_id, key, label, status, *, duration_ms=0, details=None):
+        with self.lock, self.connection:
+            previous = self.connection.execute("SELECT * FROM workflow_steps WHERE run_id=? AND step_key=?", (run_id, key)).fetchone()
+            ordinal = previous["ordinal"] if previous else self.connection.execute("SELECT COUNT(*) FROM workflow_steps WHERE run_id=?", (run_id,)).fetchone()[0]
+            self.connection.execute("INSERT OR REPLACE INTO workflow_steps VALUES (?,?,?,?,?,?,?,?,?)", (run_id, key, ordinal, label, status, previous["started_at"] if previous else to_iso(), "" if status == "running" else to_iso(), duration_ms, stable_json(details or {})))
+
+    def update_workflow(self, run_id, *, status=None, payload=None):
+        with self.lock, self.connection:
+            if status:
+                self.connection.execute("UPDATE workflows SET status=?, finished_at=? WHERE id=?", (status, "" if status == "running" else to_iso(), run_id))
+            if payload is not None:
+                self.connection.execute("UPDATE workflows SET payload_json=? WHERE id=?", (stable_json(payload), run_id))
+        return self.workflow(run_id)
+
+    def workflow(self, run_id):
+        with self.lock:
+            row = self.connection.execute("SELECT * FROM workflows WHERE id=?", (run_id,)).fetchone()
+            if not row:
+                return None
+            steps = self.connection.execute("SELECT * FROM workflow_steps WHERE run_id=? ORDER BY ordinal", (run_id,)).fetchall()
+        return {**{k: v for k, v in dict(row).items() if k != "payload_json"}, "payload": json.loads(row["payload_json"]), "steps": [{**{k: v for k, v in dict(step).items() if k != "details_json"}, "details": json.loads(step["details_json"])} for step in steps]}
+
+    def workflows(self, kind="investigation", limit=30):
+        with self.lock:
+            ids = self.connection.execute("SELECT id FROM workflows WHERE kind=? ORDER BY started_at DESC LIMIT ?", (kind, min(max(int(limit), 1), 100))).fetchall()
+        return [self.workflow(row["id"]) for row in ids]
+
+    def interrupt_workflows(self, kind):
+        for run in self.workflows(kind, 100):
+            if run["status"] == "running":
+                for step in run["steps"]:
+                    if step["status"] == "running":
+                        self.workflow_step(run["id"], step["step_key"], step["label"], "interrupted", details={"reason": "Process restarted; no automatic replay."})
+                self.update_workflow(run["id"], status="interrupted")
+
+    def workflow_metrics(self):
+        with self.lock:
+            rows = self.connection.execute("SELECT w.kind, s.step_key, s.status, COUNT(*) count, SUM(s.duration_ms)/1000 seconds FROM workflow_steps s JOIN workflows w ON w.id=s.run_id WHERE s.status != 'running' GROUP BY w.kind,s.step_key,s.status").fetchall()
+        return [dict(row) for row in rows]
 
     def record(self, component: str, action: str, *, actor: str = "system", resource: str = "", outcome: str = "success", duration_ms: float | None = None, trace_id: str = "", details: dict | None = None) -> int:
         with self.lock, self.connection:
@@ -98,7 +154,7 @@ class AuditStore:
         limit = min(max(int(limit), 1), 1000)
         with self.lock:
             rows = self.connection.execute("SELECT * FROM audit_entries ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-        return [{**dict(row), "details": json.loads(row["details_json"])} for row in rows]
+        return [{**{k: v for k, v in dict(row).items() if k != "details_json"}, "details": json.loads(row["details_json"])} for row in rows]
 
     def record_investigation(self, **values):
         values = {

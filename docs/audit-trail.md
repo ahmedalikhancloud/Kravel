@@ -8,6 +8,7 @@ The debugger database records:
 - operator and Qwen read-only tool calls;
 - investigation start, completion, failure, trace ID, and timings;
 - forwarding of an allowlisted fix ID to the broker.
+- actual evidence collection stages, sanitized local run history, and read-only recovery observations.
 
 The separate broker database records:
 
@@ -15,8 +16,11 @@ The separate broker database records:
 - optional Slack delivery and polling failures;
 - approval, rejection, or five-minute timeout;
 - approved execution result or error.
+- revalidation and independently applied operations, including partial failure.
 
-Audit entries include timestamp, component, action, actor, resource, outcome, duration, trace ID, and bounded structured details. They do not include ServiceAccount tokens, Slack tokens, the local approval token, raw LLM prompts, full log bodies, or arbitrary command input.
+The separate operator database records sanitized manual read/preview commands, explicit applications, and refused requests. It never stores unlock keys, session cookies, or preview nonces. Browser console history is in-memory only.
+
+Audit entries include timestamp, component, action, actor, resource, outcome, duration, trace ID, and structured details. They exclude ServiceAccount/Slack tokens, approval/console credentials, raw LLM prompts, and full log bodies. A separate local workflow table retains bounded sanitized investigation evidence, including log excerpts; treat these files as potentially sensitive. SQLite is not a tamper-proof audit sink.
 
 The browser exposes a merged read-only view at `/v1/audit`. Each component exposes Prometheus counters at `/metrics`. Investigation spans are sent to MLflow as metadata-only nested traces.
 

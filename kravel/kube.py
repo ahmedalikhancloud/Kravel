@@ -100,7 +100,9 @@ class KubernetesClient:
 
     def list_resources(self, kind: str, namespace: str, selector: str = "", field_selector: str = "", limit: int = 100):
         payload, elapsed = self.request("GET", self.resource_path(kind, namespace), query={"labelSelector": selector, "fieldSelector": field_selector, "limit": min(max(int(limit), 1), 200)})
-        return {"kind": payload.get("kind"), "items": [sanitize_object(item) for item in payload.get("items", [])], "durationMs": elapsed}
+        object_kind = str(payload.get("kind", "")).removesuffix("List")
+        items = [{"kind": object_kind, "apiVersion": payload.get("apiVersion", ""), **sanitize_object(item)} for item in payload.get("items", [])]
+        return {"kind": payload.get("kind"), "items": items, "truncated": bool(payload.get("metadata", {}).get("continue")), "durationMs": elapsed}
 
     def get_resource(self, kind: str, name: str, namespace: str):
         payload, elapsed = self.request("GET", self.resource_path(kind, namespace, name))

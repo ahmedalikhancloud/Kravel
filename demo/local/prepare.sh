@@ -34,6 +34,9 @@ kubectl create namespace kravel-system --dry-run=client -o yaml | kubectl apply 
 kubectl create namespace kravel-demo --dry-run=client -o yaml | kubectl apply -f -
 approval_token="${KRAVEL_LOCAL_APPROVAL_TOKEN:-$(openssl rand -hex 24)}"
 kubectl -n kravel-system create secret generic kravel-approval-token --from-literal="token=$approval_token" --dry-run=client -o yaml | kubectl apply -f -
+operator_token="$(openssl rand -hex 24)"
+kubectl -n kravel-system create secret generic kravel-operator-token --from-literal="token=$operator_token" --dry-run=client -o yaml | kubectl apply -f -
+unset operator_token
 if [[ -n "${SLACK_BOT_TOKEN:-}" && -n "${SLACK_CHANNEL_ID:-}" ]]; then
   kubectl -n kravel-system create secret generic kravel-slack --from-literal="bot-token=$SLACK_BOT_TOKEN" --from-literal="channel-id=$SLACK_CHANNEL_ID" --dry-run=client -o yaml | kubectl apply -f -
   printf 'Real Slack reaction polling enabled. Tokens were stored only in a Kubernetes Secret.\n'
@@ -45,9 +48,10 @@ fi
 section "Starting the read-only debugger and isolated approval broker"
 kubectl apply -f "$KRAVEL_ROOT/deploy/local.yaml"
 configure_kravel_model
-kubectl -n kravel-system rollout restart deployment/kravel deployment/kravel-approval-broker >/dev/null
+kubectl -n kravel-system rollout restart deployment/kravel deployment/kravel-approval-broker deployment/kravel-operator >/dev/null
 rollout kravel-system kravel 4m
 rollout kravel-system kravel-approval-broker 4m
+rollout kravel-system kravel-operator 4m
 
 section "Starting Prometheus, Grafana, and MLflow"
 kubectl apply -f "$KRAVEL_ROOT/deploy/observability-local.yaml"

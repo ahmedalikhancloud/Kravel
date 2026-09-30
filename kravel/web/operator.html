@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kravel · Human console</title><link rel="stylesheet" href="/ui/operator.css"><script src="/ui/operator.js" defer></script></head>
+<body><header><div><span class="dot"></span> HUMAN CONSOLE <small>kravel-demo · separate operator identity</small></div><button id="lock" hidden>Lock</button></header>
+<section id="unlockPanel"><h1>Your hands. Your cluster.</h1><p>Karl has no console access. Unlock a 15-minute human session with the separate local key.</p><p>In Git Bash: <code>bash demo/local/console-key.sh</code>, then paste below.</p><form id="unlockForm"><label for="key">Console key</label><input id="key" type="password" autocomplete="off" placeholder="Paste local console key" required><button>Unlock console</button></form></section>
+<section id="consolePanel" hidden><p class="boundary">kubectl-compatible API console · not Bash / PTY. No pipes, scripts, exec, Secrets, host files, or other namespaces. Writes require dry-run + your confirmation.</p><details><summary>Supported commands &amp; examples</summary><pre>kubectl get pods -o wide
+kubectl get deployments
+kubectl describe pod POD_NAME
+kubectl logs POD_NAME --previous --tail=60
+kubectl get events
+kubectl get endpointslices
+kubectl set image deployment/image-demo image-demo=busybox:kravel-demo-image-does-not-exist
+kubectl patch service demo-gateway --type=merge -p '{"spec":{"selector":{"app":"no-such-demo-app"}}}'
+kubectl patch configmap config-demo --type=merge -p '{"data":{"MODE":"broken"}}'
+kubectl rollout restart deployment/config-demo
+kubectl scale deployment/crash-demo --replicas=1</pre><p>Namespace is pinned. Reads return bounded JSON, including with -o wide. Rollout status returns one snapshot. Patch fields/values are restricted; use external Git Bash for the full scenario/reset scripts.</p></details>
+<div id="history" role="log" aria-live="polite"><p class="welcome">Connected to the actual demo cluster. Type a command below. ↑ / ↓ recalls your in-memory command history.</p></div><div id="preview" hidden><span id="previewNote"></span><button id="confirm">Confirm manual change</button><button id="cancel">Discard preview</button></div>
+<form id="commandForm"><label for="command">kravel-demo $</label><input id="command" autocomplete="off" spellcheck="false" placeholder="kubectl get pods" required><button id="run">Run / dry-run</button></form></section><p id="notice" role="status"></p></body></html>

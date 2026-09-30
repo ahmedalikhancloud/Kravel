@@ -77,4 +77,10 @@ def prometheus_metrics(store, component: str = "debugger") -> str:
     for fix in summary["fixes"]:
         lines.append(f"kravel_fixes_executed_total{_labels(fix_id=fix['fix_id'])} {fix['count']}")
     lines.append(f"kravel_component_info{_labels(component=component)} 1")
+    lines.extend(["# HELP kravel_workflow_step_seconds_sum Persisted workflow stage duration.", "# TYPE kravel_workflow_step_seconds_sum counter", "# TYPE kravel_workflow_step_seconds_count counter"])
+    for step in store.workflow_metrics():
+        # Step keys are code-owned, bounded stages (never resource names or run IDs).
+        labels = _labels(component=component, workflow=step["kind"], stage=step["step_key"], outcome=step["status"])
+        lines.append(f"kravel_workflow_step_seconds_sum{labels} {step['seconds'] or 0}")
+        lines.append(f"kravel_workflow_step_seconds_count{labels} {step['count']}")
     return "\n".join(lines) + "\n"

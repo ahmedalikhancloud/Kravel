@@ -81,3 +81,27 @@ def test_context_budget_preserves_protocol_and_recent_evidence():
     assert bounded[2]["tool_calls"] == original[2]["tool_calls"]
     assert bounded[-1]["content"] == original[-1]["content"]
     assert len(original[3]["content"]) == 28000
+
+
+def test_prefetched_strong_evidence_uses_one_guarded_synthesis_call(monkeypatch):
+    from kravel.evidence import Progress
+    requests = []
+    tracer = FakeTracer()
+    def complete(**kwargs):
+        requests.append(kwargs)
+        assert kwargs["tool_choice"] == "none"
+        assert any("E5" in (m.get("content") or "") for m in kwargs["messages"])
+        return response("Finding: selector mismatch. Evidence: E5, E1. Uncertainty: network traffic untested. Prevention: validate selectors.")
+    monkeypatch.setattr(debugger, "OpenAI", lambda **_: SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=complete))))
+    monkeypatch.setattr(debugger, "MlflowTracer", lambda *_: tracer)
+    monkeypatch.setattr(debugger, "discover_issues", lambda *_: {"issues": [], "resources": []})
+    class Kube:
+        def list_resources(self, kind, *_args, **_kwargs):
+            return {"items": [{"metadata": {"name": "demo-gateway"}, "spec": {"selector": {"app": "wrong"}}}] if kind == "services" else []}
+        def events(self, *_args, **_kwargs): return {"items": []}
+    store, config = AuditStore(), load_config()
+    store.start_workflow("run", "investigation", "kravel-demo")
+    result = debugger.run_debugger(Kube(), store, config, "Investigate Service", "kravel-demo", run_id="run", progress=Progress(store, "run"), target="Service/demo-gateway")
+    assert len(requests) == 1 and result["suggestedFixes"][0]["id"] == "fix_service_selector"
+    assert "guardrail.collected_evidence" in tracer.names
+    assert result["evidence"] and result["mutationExecuted"] is False

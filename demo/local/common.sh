@@ -63,7 +63,7 @@ read_state() {
 stop_port_forwards() {
   local key pid
   if [[ -f "$KRAVEL_STATE" ]]; then
-    for key in KRAVEL_UI_PID APPROVAL_PID GRAFANA_PID MLFLOW_PID; do
+    for key in KRAVEL_UI_PID APPROVAL_PID GRAFANA_PID MLFLOW_PID OPERATOR_PID; do
       pid="$(sed -n "s/^${key}=//p" "$KRAVEL_STATE" | tail -n 1)"
       [[ "$pid" =~ ^[0-9]+$ ]] && kill "$pid" 2>/dev/null || true
     done

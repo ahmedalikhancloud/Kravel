@@ -76,6 +76,10 @@ rules:
     resources: ["configmaps"]
     resourceNames: ["config-demo"]
     verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["demo-gateway"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -150,6 +154,7 @@ spec:
             - {name: KRAVEL_CLUSTER_ID, value: "docker-desktop"}
             - {name: KRAVEL_DEFAULT_NAMESPACE, value: "kravel-demo"}
             - {name: KRAVEL_BROKER_URL, value: "http://kravel-approval-broker.kravel-system.svc.cluster.local:8090"}
+            - {name: KRAVEL_OPERATOR_URL, value: "http://kravel-operator.kravel-system.svc.cluster.local:8082"}
             - {name: KRAVEL_LLM_BASE_URL, value: "http://model-runner.docker.internal/engines/v1"}
             - {name: KRAVEL_LLM_MODEL, value: "ai/qwen3:4b-instruct-2507-q4_K_M"}
             - {name: KRAVEL_LLM_MAX_TURNS, value: "4"}
@@ -269,3 +274,129 @@ spec:
   selector: {app: kravel-approval-broker}
   ports:
     - {name: http, port: 8090, targetPort: http}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kravel-operator
+  namespace: kravel-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kravel-demo-human-operator
+  namespace: kravel-demo
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "events"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["oom-demo", "image-demo", "crash-demo", "config-demo", "net-demo"]
+    verbs: ["patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["config-demo"]
+    verbs: ["patch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["demo-gateway"]
+    verbs: ["patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kravel-demo-human-operator
+  namespace: kravel-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kravel-demo-human-operator
+subjects:
+  - kind: ServiceAccount
+    name: kravel-operator
+    namespace: kravel-system
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kravel-operator-data
+  namespace: kravel-system
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests: {storage: 256Mi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kravel-operator
+  namespace: kravel-system
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: kravel-operator}
+  template:
+    metadata:
+      labels: {app: kravel-operator}
+    spec:
+      serviceAccountName: kravel-operator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: console
+          image: kravel:local
+          imagePullPolicy: Never
+          args: ["python", "-m", "kravel.main", "operator"]
+          env:
+            - {name: KRAVEL_HOST, value: "0.0.0.0"}
+            - {name: KRAVEL_PORT, value: "8082"}
+            - {name: KRAVEL_DB_PATH, value: "/data/operator.db"}
+            - name: KRAVEL_OPERATOR_TOKEN
+              valueFrom:
+                secretKeyRef: {name: kravel-operator-token, key: token}
+          ports: [{name: http, containerPort: 8082}]
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 3
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 25m, memory: 96Mi}
+            limits: {cpu: 500m, memory: 384Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: kravel-operator-data}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kravel-operator
+  namespace: kravel-system
+spec:
+  selector: {app: kravel-operator}
+  ports: [{name: http, port: 8082, targetPort: http}]

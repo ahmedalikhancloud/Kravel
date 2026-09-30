@@ -8,7 +8,7 @@ Kravel is intentionally a debugger first and a tightly bounded demo repair workf
 - The LLM has no shell tool and no mutation tool. It can return only prose and known fix IDs.
 - Cluster and log text is treated as untrusted input. Instruction-like text is quarantined, credentials are redacted, and evidence is length-bounded before model use.
 - Generated output is redacted and direct mutation commands are withheld. The exact displayed command comes from trusted code, not from Qwen.
-- The broker uses a separate ServiceAccount restricted with `resourceNames` to five disposable objects in `kravel-demo`.
+- The broker uses a separate ServiceAccount restricted with `resourceNames` to six disposable objects in `kravel-demo`: four Deployments, one ConfigMap, one Service.
 - The broker accepts no arbitrary command or arbitrary patch.
 - Every proposal must pass Kubernetes server-side dry-run and expire after five minutes without a human decision.
 - The reviewed plan and resource identity/spec are checked again before execution. Resets or edits invalidate the proposal, and version preconditions reject concurrent changes. Each approval/execution is claimed atomically; interrupted executions are never replayed automatically.
@@ -16,6 +16,9 @@ Kravel is intentionally a debugger first and a tightly bounded demo repair workf
 - The approval token is not mounted into the debugger and is removed from the Local Slack address bar after page load.
 - Port-forwards bind to `127.0.0.1`; no inbound internet endpoint is needed.
 - Slack tokens, when used, come from environment variables and a Kubernetes Secret. They are never embedded in manifests or source.
+- The human console has its own origin, Pod, ServiceAccount, unlock key, and database. Karl has no console tool or credential. Submissions require authenticated sessions and exact Origin/Host checks, with no cross-origin command access.
+- Console commands map to bounded API calls, never a subprocess or host shell. Manual patch fields/values are allowlisted in addition to RBAC. Writes require session-bound, one-use dry-run confirmation within 60 seconds and reject stale identities/specifications.
+- An API patch response is only acceptance. A read-only observer reports recovery, timeout, or interruption, without rollback or mutation retries.
 
 ## Important limitations
 
@@ -25,7 +28,9 @@ Kravel is intentionally a debugger first and a tightly bounded demo repair workf
 - Local Slack is a demo of the approval workflow, not a replacement for enterprise identity, retention, or separation-of-duties controls.
 - Multi-object fixes are not transactions. If a later operation fails, the audit records any earlier applied operation; inspect the result and prepare a new review instead of automatically retrying.
 - Anonymous Grafana access is convenient for localhost only. Do not expose this manifest directly outside the laptop.
-- MLflow and audit outputs avoid raw prompts and evidence by design, but operational metadata can still be sensitive.
+- MLflow spans remain metadata-only. Local investigation history now retains bounded sanitized observations, including log excerpts, and reports. Redaction is best-effort, not a guarantee that every secret format or sensitive URL is detected. Use non-sensitive demo workloads; review history before sharing. SQLite is not immutable and local administrators can alter it.
+- RBAC restricts verbs, namespaces, and names, not individual patch fields. Console/broker code enforces field restrictions; production needs compatible admission policies and network isolation. A compromised mutation component could exceed its application field allowlist within its named objects.
+- Console sessions use local HTTP, not authenticated TLS, and share a demo-human actor rather than enterprise identity. Other laptop processes may reach localhost; protect the machine/key, lock the console, and rotate keys after public demonstrations.
 
 ## Real Slack scopes
 

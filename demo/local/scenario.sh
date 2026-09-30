@@ -28,10 +28,14 @@ break_scenario() {
       marker="$(timestamp)"
       kubectl -n kravel-demo patch deployment config-demo --type merge -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"kravel.dev/approved-restart\":null,\"kravel.dev/scenario-broken-at\":\"$marker\"}}}}}"
       ;;
-    all)
-      for item in oom imagepull crashloop configmap; do break_scenario "$item"; done
+    network)
+      section "Breaking demo-gateway: Service selector matches no Pods"
+      kubectl -n kravel-demo patch service demo-gateway --type merge -p '{"spec":{"selector":{"app":"no-such-demo-app"}}}'
       ;;
-    *) die "Scenario must be oom, imagepull, crashloop, configmap, or all" ;;
+    all)
+      for item in oom imagepull crashloop configmap network; do break_scenario "$item"; done
+      ;;
+    *) die "Scenario must be oom, imagepull, crashloop, configmap, network, or all" ;;
   esac
 }
 
@@ -50,12 +54,15 @@ reset_scenario() {
       kubectl -n kravel-demo patch configmap config-demo --type merge -p '{"data":{"MODE":"healthy"}}'
       kubectl -n kravel-demo rollout restart deployment/config-demo
       ;;
+    network)
+      kubectl -n kravel-demo patch service demo-gateway --type merge -p '{"spec":{"selector":{"app":"net-demo"}}}'
+      ;;
     all)
       kubectl apply -f "$KRAVEL_ROOT/demo/local/labs.yaml"
       kubectl -n kravel-demo patch deployment config-demo --type merge -p '{"spec":{"template":{"metadata":{"annotations":{"kravel.dev/approved-restart":null,"kravel.dev/scenario-broken-at":null}}}}}'
       kubectl -n kravel-demo rollout restart deployment/config-demo
       ;;
-    *) die "Scenario must be oom, imagepull, crashloop, configmap, or all" ;;
+    *) die "Scenario must be oom, imagepull, crashloop, configmap, network, or all" ;;
   esac
   section "Waiting for the reset workloads"
   local targets
@@ -64,7 +71,8 @@ reset_scenario() {
     imagepull) targets='image-demo' ;;
     crashloop) targets='crash-demo' ;;
     configmap) targets='config-demo' ;;
-    all) targets='oom-demo image-demo crash-demo config-demo' ;;
+    network) targets='net-demo' ;;
+    all) targets='oom-demo image-demo crash-demo config-demo net-demo' ;;
   esac
   for deployment in $targets; do rollout kravel-demo "$deployment" 3m; done
 }
@@ -73,7 +81,7 @@ case "$action" in
   break) break_scenario "$scenario" ;;
   reset) reset_scenario "$scenario" ;;
   status) ;;
-  *) die "Usage: bash demo/local/scenario.sh break|reset|status [oom|imagepull|crashloop|configmap|all]" ;;
+  *) die "Usage: bash demo/local/scenario.sh break|reset|status [oom|imagepull|crashloop|configmap|network|all]" ;;
 esac
 
 section "Current demo status"

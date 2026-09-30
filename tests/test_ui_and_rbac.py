@@ -38,3 +38,19 @@ def test_obsolete_time_travel_and_laya_assets_are_not_referenced_by_runtime():
     assert "rewind_cluster_state" not in runtime
     assert "TemporalStore" not in runtime
     assert "kravel.laya" not in runtime
+
+
+def test_console_identity_origin_and_agent_tool_boundary():
+    manifest = (ROOT / "deploy" / "local.yaml").read_text(encoding="utf-8")
+    operator_role = manifest.split("name: kravel-demo-human-operator", 1)[1].split("---", 1)[0]
+    assert 'resourceNames: ["demo-gateway"]' in operator_role
+    assert 'verbs: ["patch"]' in operator_role
+    assert not any(verb in operator_role for verb in ("secrets", "pods/exec", '"create"', '"delete"'))
+    debugger_pod = manifest.split("name: kravel\n  namespace", 1)[1].split("---", 1)[0]
+    assert "KRAVEL_OPERATOR_TOKEN" not in debugger_pod and "KRAVEL_APPROVAL_TOKEN" not in debugger_pod
+    tools = (ROOT / "kravel" / "tools.py").read_text(encoding="utf-8")
+    assert "console" not in tools and "operator" not in tools
+    api = (ROOT / "kravel" / "api.py").read_text(encoding="utf-8")
+    assert "/v1/console/command" not in api
+    html = (ROOT / "kravel" / "web" / "index.html").read_text(encoding="utf-8")
+    assert 'src="http://127.0.0.1:8082/"' in html and 'id="runSteps"' in html

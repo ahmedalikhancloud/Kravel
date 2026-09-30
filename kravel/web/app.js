@@ -3,15 +3,17 @@ import { matchingResources, resourceId } from "./topology.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map((element) => [element.id, element]));
-const state = {cluster: null, selected: null, namespaceTool: false, activeTool: "get_resource", proposals: [], audit: [], kind: "all", busy: false, refreshing: false, pendingFixes: new Set(), readVersion: 0};
+const state = {cluster: null, selected: null, namespaceTool: false, activeTool: "get_resource", proposals: [], audit: [], runs: [], runId: null, runSignature: "", kind: "all", busy: false, refreshing: false, pendingFixes: new Set(), readVersion: 0};
 const labs = [
   {type: "oomkilled", name: "oom-demo", title: "Memory pressure", subtitle: "OOMKilled"},
   {type: "imagepullbackoff", name: "image-demo", title: "Image delivery", subtitle: "ImagePullBackOff"},
   {type: "crashloopbackoff", name: "crash-demo", title: "Process stability", subtitle: "CrashLoopBackOff"},
   {type: "bad_configmap", name: "config-demo", title: "Runtime configuration", subtitle: "Bad ConfigMap"},
+  {type: "service_selector", name: "demo-gateway", kind: "Service", title: "Network routing", subtitle: "Selector mismatch"},
 ];
 const pluralKinds = {Pod: "pods", Deployment: "deployments", ReplicaSet: "replicasets", ConfigMap: "configmaps", Service: "services"};
 const scene = new ClusterScene(elements.sceneCanvas, elements.resourceWorld, selectResource, (value) => { elements.cameraReadout.textContent = value; });
+elements.runSteps.classList.remove("workflow-steps");
 const logPodChoice = node("select"); logPodChoice.setAttribute("aria-label", "Pod for logs"); logPodChoice.hidden = true;
 elements.logModeControl.before(logPodChoice);
 
@@ -118,7 +120,7 @@ function renderIssues() {
 }
 function renderWorkloads() {
   elements.workloadGrid.replaceChildren(...labs.map((lab) => {
-    const resource = state.cluster?.resources.find((item) => item.kind === "Deployment" && item.name === lab.name), issue = state.cluster?.issues.find((item) => item.type === lab.type);
+    const resource = state.cluster?.resources.find((item) => item.kind === (lab.kind || "Deployment") && item.name === lab.name), issue = state.cluster?.issues.find((item) => item.type === lab.type);
     const card = node("article", `workload ${issue?.severity || "healthy"}`);
     card.append(node("span", "kind", lab.title), node("h3", "", lab.name), node("span", "status", issue ? lab.subtitle : resource?.status || "Not installed"), node("p", "", issue?.evidence || (resource?.ready ? "Ready. Break this lab independently from your terminal." : "Waiting for a ready workload.")));
     const actions = node("div", "actions"), inspect = node("button", "", "Inspect"), propose = node("button", "propose", "Propose fix");
@@ -182,13 +184,64 @@ function setQuickActions(actions) {
   elements.quickActions.replaceChildren(...actions.map(({label, run}) => { const button = node("button", "", label); button.disabled = state.busy; button.addEventListener("click", run); return button; }));
 }
 function defaults() { setQuickActions([{label: "Inspect all Pods", run: () => { clearSelection(); runTool("get_pods"); }}, {label: "Recent Events", run: () => { clearSelection(); runTool("get_events"); }}, {label: "Diagnose failures", run: () => askKarl(`Diagnose every current failure in ${namespace()}. Use read-only evidence and separate facts from uncertainty.`)}]); }
-async function askKarl(message) {
+function resourceLink(resource, label = resource) {
+  const button = node("button", "evidence-link", label); button.title = "Open the current live object in the inspector";
+  button.addEventListener("click", () => { const parts = resource.split("/"), kind = Object.keys(pluralKinds).find((key) => key === parts[0] || pluralKinds[key] === parts[0]); const match = state.cluster?.resources.find((r) => r.kind === kind && r.name === parts[1]); if (!match) return toast("This observed object is not in the current topology. Its collected evidence is still available."); selectResource(resourceId(match)); scene.focus(resourceId(match)); elements.explorer.scrollIntoView({behavior: "smooth", block: "start"}); }); return button;
+}
+function openEvidence(id) { if (!/^E\d+$/.test(id)) return; elements.evidenceDrawer.open = true; const item = elements.runEvidence.querySelector(`[data-evidence-id="${id}"]`); if (item) { item.open = true; item.dispatchEvent(new Event("toggle")); item.scrollIntoView({behavior: "smooth", block: "center"}); } }
+function workflowSteps(steps) {
+  const list = node("ol", "workflow-steps");
+  for (const step of steps || []) {
+    // Older persisted runs marked completed reads despite unavailable evidence.
+    const status = step.details?.coverage === "unavailable" ? "unavailable" : step.status;
+    const row = node("li", `workflow-step ${status}`);
+    row.append(node("span", "step-marker", status === "completed" ? "✓" : status === "running" ? "◌" : "!"), node("strong", "", step.label), node("small", "", `${status} · ${status === "running" ? "in progress" : formatDuration(step.duration_ms || 0)}`));
+    if (step.details?.resource?.includes("/")) row.append(resourceLink(step.details.resource));
+    if (step.details?.evidenceId) { const button = node("button", "evidence-link", `Inspect ${step.details.evidenceId}`); button.addEventListener("click", () => openEvidence(step.details.evidenceId)); row.append(button); }
+    if (status === "unavailable" || step.details?.error) row.append(node("small", "gap-note", step.details.error || "Evidence unavailable; not inferred."));
+    list.append(row);
+  }
+  return list;
+}
+function renderInvestigation(run) {
+  elements.investigateAll.disabled = state.busy;
+  const signature = JSON.stringify(run); if (signature === state.runSignature) return; state.runSignature = signature;
+  const payload = run.payload || {}, evidence = payload.evidence || [], findings = payload.findings || [];
+  elements.runStatus.textContent = run.status; elements.runStatus.className = `status-pill ${run.status}`; elements.runCoverage.textContent = `${run.status === "running" ? "" : `Stored investigation from ${formatTime(run.started_at)}; findings are not a live health check. `}${payload.coverage || "Collecting bounded live evidence…"}${payload.gaps?.length ? ` ${payload.gaps.length} unavailable read${payload.gaps.length === 1 ? "" : "s"} — diagnosis coverage is partial.` : ""}`;
+  elements.runSteps.replaceChildren(workflowSteps(run.steps));
+  elements.runFindings.replaceChildren(...findings.map((finding) => {
+    const card = node("article", "finding-card"), title = node("div", "finding-heading"); title.append(resourceLink(finding.resource), node("span", "strength", `${finding.strength} evidence`)); card.append(title, node("h3", "", finding.cause), node("p", "", `Uncertainty: ${finding.uncertainty}`), node("p", "prevention", `Prevent: ${finding.prevention}`));
+    const actions = node("div", "finding-actions"); for (const id of finding.evidenceIds || []) { const button = node("button", "evidence-link", id); button.addEventListener("click", () => openEvidence(id)); actions.append(button); }
+    if (finding.fixId) { const propose = node("button", "propose", "Review approved-catalog fix"); propose.addEventListener("click", () => createProposal(finding.fixId)); actions.append(propose); } card.append(actions); return card;
+  }));
+  elements.runReport.hidden = !payload.report && !payload.error;
+  elements.runReport.replaceChildren(node("h3", "", payload.error ? "Investigation incomplete · evidence retained" : "Karl’s synthesis · verify against the observations"), messageContent(payload.report || payload.error || ""));
+  if (payload.timings) { const metrics = node("div", "metrics"); for (const [label, key] of [["Total", "totalMs"], ["Qwen", "modelMs"], ["Reads", "toolMs"], ["Input guard", "inputGuardrailMs"], ["Output guard", "outputGuardrailMs"], ["Trace export", "traceFlushMs"]]) metrics.append(node("span", "", `${label} ${formatDuration(payload.timings[key])}`)); elements.runReport.append(metrics); }
+  const open = new Set([...elements.runEvidence.querySelectorAll("details[open]")].map((el) => el.dataset.evidenceId));
+  elements.evidenceCount.textContent = String(evidence.length);
+  elements.runEvidence.replaceChildren(...evidence.map((item) => { const detail = node("details", "evidence-item"); detail.dataset.evidenceId = item.id; detail.open = open.has(item.id); detail.append(node("summary", "", `${item.id} · ${item.label} · ${item.status}`)); const contents = node("div", "evidence-body"); function populate() { if (!detail.open || contents.children.length) return; contents.append(node("p", "", `Observed ${formatTime(item.observedAt)}. Stored observation, not the current resource state.`)); if (item.resource) contents.append(resourceLink(item.resource)); contents.append(node("pre", "", pretty(item.body))); } detail.addEventListener("toggle", populate); detail.append(contents); populate(); return detail; }));
+}
+async function loadRuns() {
+  try { state.runs = (await api("/v1/investigations")).runs || []; if (!state.runId) state.runId = state.runs.find((run) => run.status === "running")?.id || state.runs[0]?.id;
+    const previous = elements.runHistory.value; elements.runHistory.replaceChildren(...(state.runs.length ? state.runs.map((run) => { const option = node("option", "", `${formatTime(run.started_at)} · ${run.target || "Namespace"} · ${run.status}`); option.value = run.id; return option; }) : [node("option", "", "No runs yet · investigate a resource")])); elements.runHistory.disabled = !state.runs.length; if (state.runs.length) elements.runHistory.value = state.runId || previous;
+    if (state.runId) renderInvestigation(await api(`/v1/investigations/${encodeURIComponent(state.runId)}`));
+  } catch (error) { elements.runCoverage.textContent = `Investigation history unavailable: ${error.message}`; }
+}
+async function askKarl(message, target = "") {
   if (state.busy || !message.trim()) return false;
   state.busy = true; showRail("karl"); elements.chatSend.disabled = true; elements.chatInput.readOnly = true; elements.chat.setAttribute("aria-busy", "true");
   addMessage(message, "user"); const waiting = addMessage("Gathering evidence with read-only tools…"); setQuickActions([]);
   const started = performance.now(), progress = setInterval(() => { elements.chatProgress.textContent = `Investigating · ${formatDuration(performance.now() - started)} elapsed`; }, 1000);
   try {
-    const payload = await api("/v1/chat", {method: "POST", body: JSON.stringify({message, namespace: namespace()})});
+    let run = await api("/v1/investigations", {method: "POST", body: JSON.stringify({message, namespace: namespace(), target})});
+    state.runId = run.id; elements.investigations.scrollIntoView({behavior: "smooth", block: "start"});
+    while (run.status === "running") {
+      renderInvestigation(run); waiting.querySelector(".message-body").replaceChildren(node("p", "", run.steps?.find((step) => step.status === "running")?.label || "Starting read-only investigation…"));
+      await new Promise((resolve) => setTimeout(resolve, 1100)); run = await api(`/v1/investigations/${encodeURIComponent(run.id)}`);
+    }
+    renderInvestigation(run); await loadRuns();
+    if (run.status !== "completed") throw new Error(run.payload?.error || `Run ${run.status}. Collected evidence is retained in the cockpit.`);
+    const payload = run.payload;
     waiting.remove(); const card = addMessage(payload.report, "system", "Grounded diagnosis"), metrics = node("div", "metrics");
     metrics.append(node("span", "", `total ${formatDuration(payload.timings?.totalMs)}`), node("span", "", `Qwen ${formatDuration(payload.timings?.modelMs)}`), node("span", "", `${payload.tools?.length || 0} tools`), node("span", "", `trace ${payload.traceId ? payload.traceId.slice(0, 11) : "offline"}`)); card.append(metrics);
     state.busy = false; setQuickActions([...(payload.suggestedFixes || []).map((fix) => ({label: `Propose ${fix.title}`, run: () => createProposal(fix.id)})), {label: "Inspect evidence", run: () => { showRail("inspector"); if (selectedResource()) runTool("get_events"); else runTool("get_pods"); }}]);
@@ -216,7 +269,12 @@ function renderProposals() {
   elements.proposalList.replaceChildren(...state.proposals.slice(0, 8).map((proposal) => {
     const card = node("article", `proposal ${proposal.status}`), summary = node("div");
     summary.append(node("h3", "", `${proposal.fix_id} · ${proposal.resource}`), node("span", "deadline", proposal.status === "pending" ? `expires ${formatTime(proposal.expires_at)}` : `${formatTime(proposal.created_at)}${proposal.approval_actor ? ` · ${proposal.approval_actor}` : ""}`));
-    card.append(summary, node("span", "status-pill", proposal.status), node("code", "", proposal.command));
+    const status = proposal.verification?.status === "recovered" ? "Observed recovery" : proposal.verification?.status === "running" ? "Verifying recovery" : proposal.verification ? `Verification ${proposal.verification.status}` : proposal.status === "executed" ? "Patch accepted · not yet verified" : proposal.status;
+    card.append(summary, node("span", "status-pill", status), node("code", "", proposal.command));
+    if (proposal.status === "pending") card.append(node("p", "approval-countdown", `${Math.max(0, Math.ceil((new Date(proposal.expires_at)-Date.now())/1000))}s left for human approval`));
+    if (proposal.workflow?.steps?.length) card.append(workflowSteps(proposal.workflow.steps));
+    if (proposal.verification) { card.append(workflowSteps(proposal.verification.steps)); const observation = proposal.verification.payload?.observation; if (observation) card.append(node("p", "verification-note", `${observation.reason || ""} · ${proposal.verification.payload.stableObservations || 0}/3 stable observations. No automatic rollback.`)); }
+    if (proposal.result?.operations?.length) { const applied = node("details"); applied.dataset.id = `${proposal.id}-applied`; applied.open = open.has(applied.dataset.id); applied.append(node("summary", "", "Accepted operations (not proof of recovery)"), node("pre", "", pretty(proposal.result.operations))); card.append(applied); }
     const detail = node("details"); detail.dataset.id = proposal.id; detail.open = open.has(proposal.id); detail.append(node("summary", "", "Server dry-run output"), node("pre", "", pretty(proposal.dryRun))); card.append(detail);
     if (proposal.result?.error) card.append(node("p", "deadline", proposal.result.error)); return card;
   }));
@@ -229,7 +287,7 @@ async function loadProposals() { try { state.proposals = (await api("/v1/proposa
 async function loadAudit() { try { state.audit = (await api("/v1/audit?limit=200")).entries || []; renderAudit(); } catch (error) { elements.auditList.replaceChildren(node("div", "notice", `Audit trail unavailable: ${error.message}`)); elements.auditCount.textContent = "—"; } }
 async function refreshAll() {
   if (state.refreshing) return; state.refreshing = true; elements.refresh.disabled = true;
-  await Promise.all([loadProposals(), loadAudit(), (async () => {
+  await Promise.all([loadProposals(), loadAudit(), loadRuns(), (async () => {
     try {
       state.cluster = await api(apiPath("/v1/cluster", {namespace: namespace()})); renderCluster(); elements.connectionStatus.textContent = "Live"; elements.connectionStatus.className = "live-status online"; elements.connectionWarning.hidden = true;
     } catch (error) {
@@ -259,7 +317,7 @@ setupTabs($(".rail-tabs"), (tab) => showRail(tab === elements.inspectorTab ? "in
 $(".tool-tabs").addEventListener("click", (event) => { const button = event.target.closest("button[data-tool]"); if (button) runTool(button.dataset.tool); }); setupTabs($(".tool-tabs"), (tab) => runTool(tab.dataset.tool));
 elements.previousLogs.addEventListener("change", () => runTool("pod_logs")); logPodChoice.addEventListener("change", () => runTool("pod_logs"));
 elements.copyEvidence.addEventListener("click", () => copy(elements.toolOutput.textContent));
-elements.diagnoseSelected.addEventListener("click", () => { const resource = selectedResource(); if (resource) askKarl(`Investigate ${resource.kind}/${resource.name} in ${resource.namespace}. Use read-only evidence and its related resources. State uncertainty and do not execute changes.`); });
+elements.diagnoseSelected.addEventListener("click", () => { const resource = selectedResource(); if (resource) askKarl(`Investigate ${resource.kind}/${resource.name} in ${resource.namespace}. Use read-only evidence and its related resources. State uncertainty and do not execute changes.`, `${resource.kind}/${resource.name}`); });
 elements.chatForm.addEventListener("submit", (event) => { event.preventDefault(); askKarl(elements.chatInput.value.trim()); });
 elements.chatInput.addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); elements.chatForm.requestSubmit(); } });
 document.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", () => copy(button.dataset.copy)));
@@ -271,5 +329,8 @@ function disable3DControls() { [elements.orbitMode, elements.panMode, elements.z
 if (scene.fallback) disable3DControls(); elements.clusterWorld.addEventListener("scene-fallback", disable3DControls);
 $(".tool-tabs").querySelectorAll("button").forEach((tab) => { tab.id = `tab-${tab.dataset.tool}`; tab.setAttribute("aria-controls", "toolOutput"); }); elements.toolOutput.setAttribute("role", "tabpanel");
 addMessage("Hey, I’m Karl. Pick an object to explore its evidence, or ask me to investigate. I can read Pods, logs, Events, manifests, and ConfigMaps. Changes always go through the separate approval broker and a human—not me."); defaults();
+elements.investigateAll.addEventListener("click", () => askKarl(`Investigate current failures in ${namespace()}. Correlate evidence, state uncertainty, and suggest prevention.`));
+elements.runHistory.addEventListener("change", async () => { state.runId = elements.runHistory.value; try { renderInvestigation(await api(`/v1/investigations/${encodeURIComponent(state.runId)}`)); } catch (error) { toast(error.message); } });
+window.addEventListener("message", (event) => { if (event.origin === "http://127.0.0.1:8082" && event.source === elements.operatorFrame.contentWindow && event.data?.type === "kravel.operator.completed") refreshAll(); });
 refreshAll(); setInterval(() => { if (!document.hidden) refreshAll(); }, 5000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshAll(); });

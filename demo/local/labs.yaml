@@ -122,6 +122,33 @@ metadata:
   name: demo-gateway
   namespace: kravel-demo
 spec:
-  selector: {app: config-demo}
+  selector: {app: net-demo}
   ports:
     - {name: app, port: 80, targetPort: 8080}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: net-demo
+  namespace: kravel-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: net-demo}
+  template:
+    metadata:
+      labels: {app: net-demo}
+    spec:
+      containers:
+        - name: net-demo
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args: ["mkdir -p /tmp/www; echo 'Kravel HTTP lab is healthy' > /tmp/www/index.html; exec httpd -f -p 8080 -h /tmp/www"]
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 3
+          resources:
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {cpu: 100m, memory: 32Mi}

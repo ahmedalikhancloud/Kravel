@@ -131,3 +131,23 @@ def test_review_command_is_derived_from_all_operations():
         for command, operation in zip(commands, fix["operations"]):
             args = shlex.split(command)
             assert json.loads(args[args.index("-p") + 1]) == operation["patch"]
+
+
+def test_two_operation_config_fix_records_partial_failure_without_replay(monkeypatch):
+    broker, kube, store = make_broker(monkeypatch)
+    original = kube.patch
+    def fail_second(kind, *args, **kwargs):
+        if kind == "deployments" and not kwargs["dry_run"]:
+            raise RuntimeError("simulated version conflict")
+        return original(kind, *args, **kwargs)
+    kube.patch = fail_second
+    proposal = broker.create("fix_bad_configmap", "kravel-demo")
+    broker._execute(broker.approve(proposal["id"], "human"))
+    result = store.proposal(proposal["id"])
+    assert result["status"] == "failed" and len(result["result"]["operations"]) == 1
+    workflow = store.workflow(proposal["id"])
+    assert workflow["status"] == "partially_failed"
+    states = {s["step_key"]: s["status"] for s in workflow["steps"]}
+    assert states["apply_1"] == "completed" and states["apply_2"] == "failed"
+    broker._execute(result)
+    assert sum(not call["dryRun"] for call in kube.calls) == 1

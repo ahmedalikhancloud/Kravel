@@ -8,6 +8,8 @@ from .utils import stable_json
 
 
 SECRET_PATTERNS = [
+    ("url_credential", re.compile(r"(?i)(https?://)[^/\s:@]+:[^/\s@]+@")),
+    ("url_token", re.compile(r"(?i)([?&](?:token|key|secret|signature|api_key)=)[^&\s]+")),
     ("private_key", re.compile(r"-----BEGIN [^-\r\n]{0,40}PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]{0,40}PRIVATE KEY-----", re.I)),
     ("bearer_token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}", re.I)),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")),
@@ -63,10 +65,20 @@ def guard_model_input(value, target: str, max_characters: int = 20_000):
 def guard_debugger_output(value, max_characters: int = 12_000):
     started = time.perf_counter()
     text, findings = _redact(_normalize(value))
-    pattern = re.compile(r"^.*\bkubectl\s+(?:delete|apply|patch|replace|scale|set|edit|create|rollout)\b.*$", re.I | re.M)
+    pattern = re.compile(r"^.*\bkubectl\s+[^\n]*?\b(?:delete|apply|patch|replace|scale|set|edit|create|rollout)\b.*$", re.I | re.M)
     text, count = pattern.subn("[mutation command withheld; remediation requires human approval]", text)
     if count:
         findings.append({"code": "mutation_command_withheld", "count": count})
+    from .fixes import FIX_CATALOG
+    identifier = re.compile(r"fix[ _]?ids?\s*[:=]\s*([a-z0-9_-]+)", re.I)
+    lines = []
+    for line in text.split("\n"):
+        match = identifier.search(line)
+        if match and match.group(1) not in FIX_CATALOG:
+            line = "[Unrecognized model fix identifier withheld; use the reviewed catalog action.]"
+            findings.append({"code": "unsupported_fix_identifier", "count": 1})
+        lines.append(line)
+    text = "\n".join(lines)
     if not re.search(r"uncertainty|unknown|missing evidence", text, re.I):
         findings.append({"code": "missing_uncertainty_statement", "count": 1})
     if len(text) > max_characters:
@@ -99,3 +111,14 @@ def guard_tool_evidence(value, max_characters: int = 12_000):
         encoded = encoded[:max_characters - 80] + "\n[truncated by tool-evidence guardrail]"
         findings.append({"code": "input_truncated", "count": 1})
     return {"value": encoded, "decision": "allow_with_redactions" if findings else "allow", "findings": findings, "latencyMs": _ms(started)}
+
+
+def public_evidence(value):
+    """Bound and redact decoded evidence before persistence or browser delivery."""
+    if isinstance(value, dict):
+        return {str(key)[:200]: ("<redacted:sensitive_field>" if re.search(r"(?i)password|passwd|token|secret|api.?key|authorization", str(key)) else public_evidence(item)) for key, item in list(value.items())[:80]}
+    if isinstance(value, list):
+        return [public_evidence(item) for item in value[:100]]
+    if isinstance(value, str):
+        return guard_model_input(value, "public evidence", 6000)["value"] if value.strip() else value
+    return value

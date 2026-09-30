@@ -59,7 +59,7 @@ def execute_read_tool(name: str, args: dict, kube):
 def _container_issue(pod: dict, namespace: str = "kravel-demo"):
     app = pod.get("metadata", {}).get("labels", {}).get("app", "")
     is_demo = namespace == "kravel-demo"
-    statuses = pod.get("status", {}).get("containerStatuses", [])
+    statuses = [*(pod.get("status", {}).get("initContainerStatuses") or []), *(pod.get("status", {}).get("containerStatuses") or [])]
     for status in statuses:
         last = status.get("lastState", {}).get("terminated", {})
         current = status.get("state", {})
@@ -159,10 +159,14 @@ def discover_issues(kube, namespace: str) -> dict:
         resources.append({"kind": "ReplicaSet", "name": name, "namespace": namespace, "status": issue["title"] if issue else f"{ready}/{desired} ready", "health": issue["severity"] if issue else ("healthy" if ready == desired else "warning"), "ready": ready == desired, "issueType": issue["type"] if issue else ""})
     for service in services:
         name = service.get("metadata", {}).get("name", "")
+        selector = service.get("spec", {}).get("selector", {})
+        mismatched = bool(selector) and not any(all(p.get("metadata", {}).get("labels", {}).get(k) == v for k, v in selector.items()) for p in pods)
+        if mismatched:
+            issues.append({"id": f"service_selector:{name}", "type": "service_selector", "title": "Service selector mismatch", "severity": "warning", "resource": f"Service/{name}", "evidence": "Selector matches no observed Pods; connectivity is untested.", "fixId": "fix_service_selector" if namespace == "kravel-demo" and name == "demo-gateway" else ""})
         resources.append({
             "kind": "Service", "name": name, "namespace": namespace,
-            "status": service.get("spec", {}).get("type", "ClusterIP"),
-            "health": "healthy", "ready": True, "issueType": "",
+            "status": "No matching Pods" if mismatched else service.get("spec", {}).get("type", "ClusterIP"),
+            "health": "warning" if mismatched else "healthy", "ready": not mismatched, "issueType": "service_selector" if mismatched else "",
         })
     for resource in resources:
         resource["id"] = resource_key(resource["kind"], resource["name"], namespace)

@@ -14,6 +14,8 @@ from .fixes import public_catalog
 from .metrics import prometheus_metrics
 from .tools import discover_issues, enforce_read_scope, execute_read_tool
 from .utils import safe_service_url
+from .workflows import WorkflowManager
+from .guardrails import public_evidence
 
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
@@ -44,6 +46,7 @@ def _broker_request(config, path: str, method: str = "GET", body=None):
 
 
 def create_server(store, config, kube):
+    workflows = WorkflowManager(kube, store, config)
     class Handler(BaseHTTPRequestHandler):
         server_version = "Kravel/0.3.0"
 
@@ -51,7 +54,7 @@ def create_server(store, config, kube):
             return
 
         def send_json(self, status, payload):
-            body = json.dumps(payload, indent=2, ensure_ascii=False).encode()
+            body = json.dumps(public_evidence(payload), indent=2, ensure_ascii=False).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -66,7 +69,7 @@ def create_server(store, config, kube):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+            self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-src http://127.0.0.1:8082; base-uri 'none'; frame-ancestors 'none'")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
@@ -124,7 +127,14 @@ def create_server(store, config, kube):
                 if path == "/v1/catalog":
                     return self.send_json(200, {"fixes": public_catalog(), "policy": {"namespace": "kravel-demo", "approvalTimeoutSeconds": 300, "arbitraryCommands": False}})
                 if path == "/v1/proposals":
-                    return self.send_json(200, _broker_request(config, "/v1/proposals"))
+                    payload = _broker_request(config, "/v1/proposals")
+                    payload["proposals"] = workflows.observe_proposals(payload.get("proposals", []))
+                    return self.send_json(200, payload)
+                if path == "/v1/investigations":
+                    return self.send_json(200, {"runs": [{k: v for k, v in run.items() if k not in {"payload", "steps"}} for run in store.workflows()]})
+                if path.startswith("/v1/investigations/"):
+                    run = store.workflow(path.split("/")[-1])
+                    return self.send_json(200 if run and run["kind"] == "investigation" else 404, run if run and run["kind"] == "investigation" else {"error": "not_found"})
                 if path == "/v1/audit":
                     local = store.audit_entries(int(query.get("limit", 200)))
                     try:
@@ -132,9 +142,24 @@ def create_server(store, config, kube):
                     except Exception:
                         broker = []
                     entries = sorted([*local, *broker], key=lambda item: item.get("at", ""), reverse=True)[:300]
-                    return self.send_json(200, {"entries": entries})
+                    unavailable = []
+                    if getattr(config, "operator_url", ""):
+                        try:
+                            with urllib.request.urlopen(safe_service_url(config.operator_url, "operator audit") + "/v1/audit", timeout=3) as response:
+                                entries.extend(json.load(response).get("entries", []))
+                        except Exception:
+                            unavailable.append("operator audit")
+                    return self.send_json(200, {"entries": sorted(entries, key=lambda item: item.get("at", ""), reverse=True)[:300], "unavailable": unavailable})
                 if path == "/v1/capabilities":
-                    return self.send_json(200, {"agent": {"mode": "read-only", "allowed": ["get", "list", "watch", "pods/log"], "denied": ["secrets", "pods/exec", "create", "update", "patch", "delete"]}, "broker": {"namespace": "kravel-demo", "verbs": ["get", "patch"], "resourceNames": ["oom-demo", "image-demo", "crash-demo", "config-demo"], "requiresHumanApproval": True}})
+                    return self.send_json(200, {
+                        "agent": {"mode": "read-only", "allowed": ["get", "list", "watch", "pods/log"], "denied": ["secrets", "pods/exec", "create", "update", "patch", "delete"]},
+                        "broker": {
+                            "namespace": "kravel-demo", "verbs": ["get", "patch"],
+                            "resources": {"deployments": ["oom-demo", "image-demo", "crash-demo", "config-demo"], "configmaps": ["config-demo"], "services": ["demo-gateway"]},
+                            "requiresHumanApproval": True, "approvalTimeoutSeconds": 300,
+                        },
+                        "console": {"mode": "human-only", "namespace": "kravel-demo", "shell": False, "agentAccess": False, "writesRequirePreviewConfirmation": True},
+                    })
                 return self.send_json(404, {"error": "not_found"})
             except Exception as exc:
                 return self.send_json(400, {"error": str(exc)})
@@ -146,11 +171,24 @@ def create_server(store, config, kube):
                     return self.send_json(401, {"error": "unauthorized"})
                 body = self.body()
                 namespace = str(body.get("namespace") or config.default_namespace)
+                if path == "/v1/investigations":
+                    question = str(body.get("message") or "").strip()
+                    if not question:
+                        raise ValueError("message is required")
+                    try:
+                        return self.send_json(202, workflows.start(question, namespace, str(body.get("target") or "")[:250]))
+                    except RuntimeError as exc:
+                        return self.send_json(409, {"error": str(exc)})
                 if path == "/v1/chat":
                     question = str(body.get("message") or "").strip()
                     if not question:
                         raise ValueError("message is required")
-                    return self.send_json(200, run_debugger(kube, store, config, question, namespace))
+                    if not workflows.model_slot.acquire(blocking=False):
+                        return self.send_json(409, {"error": "Karl is already investigating"})
+                    try:
+                        return self.send_json(200, run_debugger(kube, store, config, question, namespace))
+                    finally:
+                        workflows.model_slot.release()
                 if path == "/v1/tools/run":
                     name = str(body.get("tool") or "")
                     return self.send_json(200, self.read_tool(name, body.get("arguments") or {}, namespace))
@@ -163,4 +201,6 @@ def create_server(store, config, kube):
             except Exception as exc:
                 return self.send_json(400, {"error": str(exc)})
 
-    return ThreadingHTTPServer((config.host, config.port), Handler)
+    server = ThreadingHTTPServer((config.host, config.port), Handler)
+    server.workflows = workflows
+    return server

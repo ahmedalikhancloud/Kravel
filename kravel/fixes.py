@@ -67,15 +67,22 @@ FIX_CATALOG = {
             },
         ],
     },
+    "fix_service_selector": {
+        "title": "Reconnect the demo HTTP Service",
+        "resource": "Service/demo-gateway",
+        "operations": [{"kind": "services", "name": "demo-gateway", "contentType": "application/merge-patch+json", "patch": {"spec": {"selector": {"app": "net-demo"}}}}],
+    },
 }
 
 
-def get_fix(fix_id: str, namespace: str) -> dict:
+def get_fix(fix_id: str, namespace: str, restart_marker: str = "") -> dict:
     if namespace != DEMO_NAMESPACE:
         raise ValueError("The approval broker can mutate only the disposable kravel-demo namespace")
     if fix_id not in FIX_CATALOG:
         raise ValueError("Unknown or non-allowlisted fix")
     fix = copy.deepcopy({"id": fix_id, "namespace": namespace, **FIX_CATALOG[fix_id]})
+    if fix_id == "fix_bad_configmap" and restart_marker:
+        fix["operations"][1]["patch"]["spec"]["template"]["metadata"]["annotations"]["kravel.dev/approved-restart"] = restart_marker
     # The review command describes exactly the structured patches that are executed.
     fix["command"] = " && ".join(
         f"kubectl -n {DEMO_NAMESPACE} patch {operation['kind']} {operation['name']} "
@@ -97,6 +104,8 @@ def summarize_result(operation: dict, response: dict) -> dict:
         "resource": f"{obj.get('kind', operation['kind'])}/{obj.get('metadata', {}).get('name', operation['name'])}",
         "resourceVersion": obj.get("metadata", {}).get("resourceVersion", ""),
         "generation": obj.get("metadata", {}).get("generation"),
+        "uid": obj.get("metadata", {}).get("uid", ""),
+        "selector": obj.get("spec", {}).get("selector", {}),
         "data": obj.get("data", {}),
         "templateAnnotations": obj.get("spec", {}).get("template", {}).get("metadata", {}).get("annotations", {}),
         "containers": [

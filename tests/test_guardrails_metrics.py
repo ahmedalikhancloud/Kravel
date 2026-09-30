@@ -38,3 +38,11 @@ def test_counters_do_not_reset_when_ui_history_page_fills():
     for _ in range(1005):
         store.record("debugger", "tool.get_pods")
     assert 'kravel_audit_events_total{component="debugger",action="tool.get_pods",outcome="success"} 1005' in prometheus_metrics(store)
+
+
+def test_output_with_namespace_flags_and_invented_fix_id_is_withheld():
+    from kravel.guardrails import guard_debugger_output
+    result = guard_debugger_output("kubectl -n kravel-demo patch deployment crash-demo -p '{}'\nFix ID: 1\nUncertainty: unknown.")
+    assert "kubectl" not in result["value"]
+    assert "Fix ID: 1" not in result["value"]
+    assert {f["code"] for f in result["findings"]} >= {"mutation_command_withheld", "unsupported_fix_identifier"}

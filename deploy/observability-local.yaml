@@ -20,6 +20,9 @@ data:
       - job_name: kravel-approval-broker
         static_configs:
           - targets: ["kravel-approval-broker.kravel-system.svc.cluster.local:8090"]
+      - job_name: kravel-human-operator
+        static_configs:
+          - targets: ["kravel-operator.kravel-system.svc.cluster.local:8082"]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -109,7 +112,10 @@ data:
         {"type":"stat","title":"Oldest pending approval","id":9,"gridPos":{"h":5,"w":6,"x":0,"y":23},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"max(kravel_approval_age_seconds)","refId":"A"}],"fieldConfig":{"defaults":{"unit":"s","decimals":0},"overrides":[]},"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
         {"type":"stat","title":"Human-approved fixes","id":10,"gridPos":{"h":5,"w":6,"x":6,"y":23},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum(kravel_fixes_executed_total)","refId":"A"}],"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
         {"type":"stat","title":"p95 investigation latency","id":11,"gridPos":{"h":5,"w":6,"x":12,"y":23},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"histogram_quantile(0.95, sum by (le) (kravel_debug_total_latency_distribution_seconds_bucket))","refId":"A"}],"fieldConfig":{"defaults":{"unit":"s","decimals":3},"overrides":[]},"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
-        {"type":"stat","title":"Components online","id":12,"gridPos":{"h":5,"w":6,"x":18,"y":23},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum(kravel_component_info)","refId":"A"}],"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}}
+        {"type":"stat","title":"Components online","id":12,"gridPos":{"h":5,"w":6,"x":18,"y":23},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum(kravel_component_info)","refId":"A"}],"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
+        {"type":"bargauge","title":"Mean actual workflow stage latency (persisted history)","id":13,"gridPos":{"h":12,"w":14,"x":0,"y":28},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (workflow, stage) (kravel_workflow_step_seconds_sum) / clamp_min(sum by (workflow, stage) (kravel_workflow_step_seconds_count), 1)","legendFormat":"{{workflow}} · {{stage}}","refId":"A"}],"fieldConfig":{"defaults":{"unit":"s","decimals":3},"overrides":[]},"options":{"displayMode":"gradient","orientation":"horizontal","reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
+        {"type":"bargauge","title":"Recovery verification outcomes (not patch acceptance)","id":14,"gridPos":{"h":6,"w":10,"x":14,"y":28},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (outcome) (kravel_audit_events_total{action=\"fix.verification\"})","legendFormat":"{{outcome}}","refId":"A"}],"options":{"displayMode":"lcd","orientation":"horizontal","reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
+        {"type":"bargauge","title":"Manual operator actions (separate identity)","id":15,"gridPos":{"h":6,"w":10,"x":14,"y":34},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (action, outcome) (kravel_audit_events_total{component=\"operator\"})","legendFormat":"{{action}} · {{outcome}}","refId":"A"}],"options":{"displayMode":"lcd","orientation":"horizontal","reduceOptions":{"calcs":["lastNotNull"],"values":false}}}
       ],
       "refresh":"2s",
       "schemaVersion":41,
