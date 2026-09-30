@@ -56,7 +56,7 @@ def grounded_reply(store, config, request: dict) -> dict:
     if any(word in message for word in ("why", "root cause", "investigate", "analyze", "analyse")):
         return {
             "kind": "approval_request",
-            "message": "I can run the guarded Laya → policy → Qwen investigation for this exact window. It is read-only, takes roughly 10 seconds on the warmed local models, and will create an MLflow trace. Approve the investigation?",
+            "message": "I can run the guarded Laya → policy → Qwen investigation for this exact window. It is read-only, typically takes 10–35 seconds depending on hardware and model warmth, and will create an MLflow trace. Approve the investigation?",
             "approval": {"action": "analyze", "label": "Approve investigation", "mutation": False},
             "options": ["Approve investigation", "Only show deterministic evidence"],
         }
