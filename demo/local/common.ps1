@@ -33,6 +33,34 @@ function Invoke-KravelNativeWithRetry {
   }
 }
 
+function Repair-KravelDockerGpuHelper {
+  if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return }
+  $targetDirectory = Join-Path $env:USERPROFILE ".docker\bin\inference"
+  $target = Join-Path $targetDirectory "com.docker.nv-gpu-info.exe"
+  if (Test-Path -LiteralPath $target) {
+    $targetSignature = Get-AuthenticodeSignature -LiteralPath $target
+    if ($targetSignature.Status -eq "Valid" -and $targetSignature.SignerCertificate.Subject -match "O=Docker Inc") { return }
+    throw "Docker's installed GPU helper failed signature validation: $target"
+  }
+
+  $dockerCommand = Get-Command docker -ErrorAction Stop
+  $resourcesDirectory = Split-Path (Split-Path $dockerCommand.Source -Parent) -Parent
+  $source = Join-Path $resourcesDirectory "model-runner\bin\com.docker.nv-gpu-info.exe"
+  if (-not (Test-Path -LiteralPath $source)) {
+    Write-Warning "Docker's GPU helper is missing from both its runtime and installation directories. Reinstall or repair Docker Desktop."
+    return
+  }
+
+  $signature = Get-AuthenticodeSignature -LiteralPath $source
+  if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -notmatch "O=Docker Inc") {
+    throw "Refusing to copy an unverified Docker GPU helper from $source"
+  }
+
+  New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null
+  Copy-Item -LiteralPath $source -Destination $target -Force
+  Write-Warning "Applied the Docker Desktop GPU-helper provisioning workaround using Docker's verified bundled executable."
+}
+
 function Assert-KravelPrerequisites {
   foreach ($name in @("docker", "kubectl")) {
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
@@ -75,6 +103,7 @@ function Select-KravelDesktopModelRunner {
     Invoke-KravelNative "docker" @("model", "context", "use", $contextName)
   }
 
+  Repair-KravelDockerGpuHelper
   try {
     Invoke-KravelNative "docker" @("model", "status")
   } catch {

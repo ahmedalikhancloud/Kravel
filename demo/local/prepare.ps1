@@ -12,6 +12,7 @@ Select-KravelDesktopModelRunner
 Write-Host "`n==> Downloading and configuring the local Qwen reasoning model"
 Invoke-KravelNativeWithRetry "docker" @("model", "pull", $qwenModel)
 Invoke-KravelNative "docker" @("model", "configure", "--context-size", "4096", $qwenModel)
+Repair-KravelDockerGpuHelper
 Invoke-KravelNative "docker" @("model", "run", "--detach", $qwenModel)
 
 Write-Host "`n==> Building the local Kravel and CPU-only Laya images"
