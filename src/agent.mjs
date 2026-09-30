@@ -6,7 +6,12 @@ import { isInternalHostname, safeServiceUrl } from "./network-safety.mjs";
 const DEFAULT_BASE_URL = "http://model-runner.docker.internal/engines/v1";
 const DEFAULT_MODEL = "ai/qwen3:4b-thinking-2507-q4_K_M";
 const DEFAULT_MAX_TURNS = 6;
-const DEFAULT_MAX_TOOL_CHARS = 20_000;
+const DEFAULT_MAX_TOOL_CHARS = 12_000;
+const DEFAULT_REASONING_BUDGET = 384;
+const DEFAULT_MAX_TOKENS = 1_400;
+const DEFAULT_REQUEST_TIMEOUT_MS = 180_000;
+const MAX_TOOL_USE_CORRECTIONS = 2;
+const MAX_EMPTY_RESPONSE_CORRECTIONS = 2;
 
 const systemPrompt = `You are Kravel, a read-only Kubernetes incident investigator.
 
@@ -25,6 +30,12 @@ Return a compact report with: Assessment, Evidence timeline, Likely chain, Uncer
 function positiveInteger(value, fallback, maximum) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, maximum);
+}
+
+function nonNegativeInteger(value, fallback, maximum) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return Math.min(parsed, maximum);
 }
 
@@ -62,7 +73,7 @@ async function completion({ baseUrl, apiKey, body, fetchImpl, retries = 2 }) {
           "user-agent": "kravel/0.1.0"
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(60_000)
+        signal: AbortSignal.timeout(DEFAULT_REQUEST_TIMEOUT_MS)
       });
     } catch (error) {
       if (attempt < retries && error.name !== "AbortError" && error.name !== "TimeoutError") {
@@ -74,9 +85,15 @@ async function completion({ baseUrl, apiKey, body, fetchImpl, retries = 2 }) {
 
     if (response.ok) {
       const payload = await response.json();
-      const message = payload.choices?.[0]?.message;
+      const choice = payload.choices?.[0];
+      const message = choice?.message;
       if (!message) throw new Error("LLM response did not contain choices[0].message");
-      return { message, elapsedMs: performance.now() - started, usage: payload.usage ?? {} };
+      return {
+        message,
+        finishReason: choice.finish_reason ?? "",
+        elapsedMs: performance.now() - started,
+        usage: payload.usage ?? {}
+      };
     }
 
     if (attempt < retries && (response.status === 429 || response.status >= 500)) {
@@ -172,6 +189,7 @@ export async function runTemporalAgent({
   baseUrl = config.llmBaseUrl || DEFAULT_BASE_URL,
   model = config.llmModel || DEFAULT_MODEL,
   maxTurns = config.llmMaxTurns || DEFAULT_MAX_TURNS,
+  reasoningBudget = config.llmReasoningBudget ?? DEFAULT_REASONING_BUDGET,
   maxToolCharacters = DEFAULT_MAX_TOOL_CHARS,
   fetchImpl = globalThis.fetch,
   onToolCall = () => {}
@@ -185,6 +203,7 @@ export async function runTemporalAgent({
   if (typeof fetchImpl !== "function") throw new Error("fetch is unavailable");
 
   const turnLimit = positiveInteger(maxTurns, DEFAULT_MAX_TURNS, 10);
+  const boundedReasoningBudget = nonNegativeInteger(reasoningBudget, DEFAULT_REASONING_BUDGET, 2_048);
   const resultLimit = positiveInteger(maxToolCharacters, DEFAULT_MAX_TOOL_CHARS, 200_000);
   const tools = openAiTools();
   const defaults = { clusterId: config.clusterId, namespace, incidentAt, baselineAt };
@@ -205,6 +224,10 @@ export async function runTemporalAgent({
   ];
 
   let toolCallsExecuted = 0;
+  let successfulToolCalls = 0;
+  let toolUseCorrections = 0;
+  let emptyResponseCorrections = 0;
+  let requireFinalAnswer = false;
   let modelMs = 0;
   let toolMs = 0;
   const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -217,9 +240,12 @@ export async function runTemporalAgent({
         model,
         messages,
         tools,
-        tool_choice: turn === 0 ? "required" : "auto",
+        tool_choice: successfulToolCalls === 0 ? "required" : requireFinalAnswer ? "none" : "auto",
+        ...(boundedReasoningBudget > 0
+          ? { reasoning_budget: requireFinalAnswer ? Math.min(boundedReasoningBudget, 128) : boundedReasoningBudget }
+          : {}),
         temperature: 0.1,
-        max_tokens: 1_200
+        max_tokens: DEFAULT_MAX_TOKENS
       }
     });
     const message = completed.message;
@@ -232,10 +258,34 @@ export async function runTemporalAgent({
 
     if (!calls.length) {
       const answer = textContent(message.content);
-      if (!toolCallsExecuted) throw new Error("The model returned an answer without inspecting temporal evidence");
-      if (!answer) throw new Error("The model returned neither tool calls nor a final answer");
+      if (!successfulToolCalls) {
+        if (toolUseCorrections >= MAX_TOOL_USE_CORRECTIONS) {
+          throw new Error(`The model did not inspect temporal evidence after ${toolUseCorrections + 1} attempts (last finish reason: ${completed.finishReason || "unknown"})`);
+        }
+        toolUseCorrections += 1;
+        messages.push({
+          role: "user",
+          content: completed.finishReason === "length"
+            ? "Your previous response exhausted its token budget before completing a tool call. Call one supplied temporal tool now; do not answer the incident question yet."
+            : "Your previous response is not accepted because it did not inspect temporal evidence. Call one supplied temporal tool now; do not answer the incident question yet."
+        });
+        continue;
+      }
+      if (!answer) {
+        if (emptyResponseCorrections >= MAX_EMPTY_RESPONSE_CORRECTIONS) {
+          throw new Error(`The model returned no final answer after ${emptyResponseCorrections + 1} attempts (last finish reason: ${completed.finishReason || "unknown"})`);
+        }
+        emptyResponseCorrections += 1;
+        requireFinalAnswer = true;
+        messages.push({
+          role: "user",
+          content: "Temporal evidence has already been collected. Return the compact evidence-grounded report now in the visible response content. Do not call another tool and do not return only hidden reasoning."
+        });
+        continue;
+      }
       return {
-        answer, model, turns: turn + 1, toolCalls: toolCallsExecuted, modelMs, toolMs, inputGuardrailMs, usage,
+        answer, model, turns: turn + 1, toolCalls: successfulToolCalls, toolAttempts: toolCallsExecuted,
+        toolUseCorrections, emptyResponseCorrections, modelMs, toolMs, inputGuardrailMs, usage,
         inputGuardrail: {
           decision: inputGuardrailFindings.length ? "allow_with_redactions" : "allow",
           findings: inputGuardrailFindings
@@ -254,6 +304,7 @@ export async function runTemporalAgent({
         args = enforceScope(name, args, defaults);
         onToolCall({ name, args });
         result = await executeTemporalTool({ name, args, store, config, embeddingClient });
+        successfulToolCalls += 1;
       } catch (error) {
         result = { error: error.message, tool: name };
       } finally {
@@ -276,6 +327,10 @@ export async function runTemporalAgent({
     }
   }
 
+  if (!successfulToolCalls) {
+    throw new Error("The model reached the tool-turn limit without successfully inspecting temporal evidence");
+  }
+
   const finalCompletion = await completion({
     baseUrl,
     apiKey,
@@ -288,8 +343,9 @@ export async function runTemporalAgent({
       ],
       tools,
       tool_choice: "none",
+      ...(boundedReasoningBudget > 0 ? { reasoning_budget: boundedReasoningBudget } : {}),
       temperature: 0.1,
-      max_tokens: 1_200
+      max_tokens: DEFAULT_MAX_TOKENS
     }
   });
   const finalMessage = finalCompletion.message;
@@ -300,7 +356,8 @@ export async function runTemporalAgent({
   const answer = textContent(finalMessage.content);
   if (!answer) throw new Error("The model did not return a final answer after the tool-turn limit");
   return {
-    answer, model, turns: turnLimit + 1, toolCalls: toolCallsExecuted, modelMs, toolMs, inputGuardrailMs, usage,
+    answer, model, turns: turnLimit + 1, toolCalls: successfulToolCalls, toolAttempts: toolCallsExecuted,
+    toolUseCorrections, emptyResponseCorrections, modelMs, toolMs, inputGuardrailMs, usage,
     inputGuardrail: {
       decision: inputGuardrailFindings.length ? "allow_with_redactions" : "allow",
       findings: inputGuardrailFindings
@@ -311,5 +368,6 @@ export async function runTemporalAgent({
 export const agentDefaults = {
   baseUrl: DEFAULT_BASE_URL,
   model: DEFAULT_MODEL,
-  maxTurns: DEFAULT_MAX_TURNS
+  maxTurns: DEFAULT_MAX_TURNS,
+  reasoningBudget: DEFAULT_REASONING_BUDGET
 };

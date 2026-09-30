@@ -31,6 +31,39 @@ function Wait-ForPodReason {
   } $TimeoutSeconds
 }
 
+function Wait-ForKravelResource {
+  param(
+    [Parameter(Mandatory = $true)][string]$Kind,
+    [Parameter(Mandatory = $true)][string]$Name,
+    [string]$ChangeAt = "",
+    [int]$TimeoutSeconds = 90
+  )
+  $probe = @'
+const [kind, name, changeAt] = process.argv.slice(1);
+const timestamp = encodeURIComponent(new Date().toISOString());
+fetch(`http://127.0.0.1:8080/v1/state/rewind?timestamp=${timestamp}&namespace=kravel-demo`)
+  .then((response) => response.json())
+  .then((state) => {
+    const object = state.objects?.find((candidate) => candidate.kind === kind && candidate.metadata?.name === name);
+    const annotationValues = Object.values(object?.metadata?.annotations ?? {});
+    const observed = object && (!changeAt || annotationValues.includes(changeAt));
+    console.log(Boolean(observed));
+  })
+  .catch(() => console.log(false));
+'@
+  $description = "Kravel to record $Kind kravel-demo/$Name"
+  if ($ChangeAt) { $description += " at $ChangeAt" }
+  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    $output = & kubectl -n kravel-system exec deployment/kravel -- node -e $probe $Kind $Name $ChangeAt 2>$null
+    $exitCode = $LASTEXITCODE
+    $observed = ($output | Out-String).Trim()
+    if ($exitCode -eq 0 -and $observed -eq "true") { return }
+    Start-Sleep -Seconds 2
+  }
+  throw "Timed out waiting for $description"
+}
+
 Assert-KravelPrerequisites
 Stop-KravelPortForwards
 
@@ -48,7 +81,15 @@ Invoke-KravelNative "kubectl" @("apply", "-f", (Join-Path $script:KravelRoot "de
 Invoke-KravelNative "kubectl" @("apply", "-f", (Join-Path $script:KravelRoot "deploy\observability-local.yaml"))
 Invoke-KravelNative "kubectl" @("-n", "kravel-system", "rollout", "status", "deployment/kravel", "--timeout=3m")
 foreach ($deployment in @("kravel-prometheus", "kravel-grafana", "kravel-mlflow")) {
-  Invoke-KravelNative "kubectl" @("-n", "kravel-observability", "rollout", "status", "deployment/$deployment", "--timeout=5m")
+  try {
+    Invoke-KravelNative "kubectl" @("-n", "kravel-observability", "rollout", "status", "deployment/$deployment", "--timeout=5m")
+  } catch {
+    Show-KravelDeploymentDiagnostics `
+      -Namespace "kravel-observability" `
+      -Deployment $deployment `
+      -Container ($deployment -replace "^kravel-", "")
+    throw
+  }
 }
 
 Write-Host "`n==> Creating the healthy workload baseline"
@@ -64,7 +105,13 @@ if ($Scenario -eq "escalation") {
     return [bool]$addresses
   } 60
 }
-Start-Sleep -Seconds 5
+Wait-ForKravelResource "ConfigMap" "api-config"
+Wait-ForKravelResource "Deployment" "checkout-api"
+if ($Scenario -eq "escalation") {
+  Wait-ForKravelResource "Service" "payments-api"
+  Wait-ForKravelResource "Deployment" "inventory-api"
+  Wait-ForKravelResource "Deployment" "reports-worker"
+}
 $baselineAt = Get-KravelTimestamp
 Write-Host "Healthy baseline captured at $baselineAt"
 
@@ -76,7 +123,7 @@ Invoke-DemoPatch "configmap" "api-config" @{
 }
 Invoke-KravelNative "kubectl" @("-n", "kravel-demo", "rollout", "restart", "deployment/checkout-api")
 Wait-ForPodReason "app=checkout-api" "CrashLoopBackOff|Error" 90
-Start-Sleep -Seconds 4
+Wait-ForKravelResource "ConfigMap" "api-config" $changeAt
 
 if ($Scenario -eq "escalation") {
   Write-Host "`n==> Incident 2: Service selector drift removes every payments endpoint"
@@ -89,7 +136,7 @@ if ($Scenario -eq "escalation") {
     $addresses = (& kubectl -n kravel-demo get endpoints payments-api -o "jsonpath={.subsets[*].addresses[*].ip}" 2>$null | Out-String).Trim()
     return -not [bool]$addresses
   } 60
-  Start-Sleep -Seconds 4
+  Wait-ForKravelResource "Service" "payments-api" $changeAt
 
   Write-Host "`n==> Incident 3: Inventory rolls out an image that does not exist"
   $changeAt = Get-KravelTimestamp
@@ -100,7 +147,7 @@ if ($Scenario -eq "escalation") {
     } }
   } "strategic"
   Wait-ForPodReason "app=inventory-api" "ErrImagePull|ImagePullBackOff" 120
-  Start-Sleep -Seconds 4
+  Wait-ForKravelResource "Deployment" "inventory-api" $changeAt
 
   Write-Host "`n==> Incident 4: Reports receives an impossible node selector"
   $changeAt = Get-KravelTimestamp
@@ -114,7 +161,7 @@ if ($Scenario -eq "escalation") {
     $reason = (& kubectl -n kravel-demo get pods -l app=reports-worker -o "jsonpath={.items[*].status.conditions[?(@.type=='PodScheduled')].reason}" 2>$null | Out-String)
     return $reason -match "Unschedulable"
   } 90
-  Start-Sleep -Seconds 5
+  Wait-ForKravelResource "Deployment" "reports-worker" $changeAt
 }
 
 $incidentAt = Get-KravelTimestamp

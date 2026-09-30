@@ -95,6 +95,8 @@ spec:
               value: ai/qwen3:4b-thinking-2507-q4_K_M
             - name: KRAVEL_LLM_MAX_TURNS
               value: "6"
+            - name: KRAVEL_LLM_REASONING_BUDGET
+              value: "384"
             - name: KRAVEL_MLFLOW_URL
               value: http://kravel-mlflow.kravel-observability.svc.cluster.local:5000
           ports:

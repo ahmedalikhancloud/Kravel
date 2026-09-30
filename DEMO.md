@@ -80,7 +80,7 @@ Run once while you have a reliable internet connection:
 This command:
 
 - downloads `ai/qwen3:4b-thinking-2507-q4_K_M`;
-- limits its context window to 4,096 tokens;
+- configures an 8,192-token context window and a bounded per-request reasoning budget;
 - builds the local Kravel image;
 - builds the CPU-only Laya image;
 - downloads Laya's English checkpoint into a persistent Kubernetes volume;

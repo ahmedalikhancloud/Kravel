@@ -127,6 +127,7 @@ Guardrails reduce risk; they are not a security boundary. Kubernetes fields and 
 | `KRAVEL_LLM_BASE_URL` | Docker Model Runner | OpenAI-compatible local endpoint |
 | `KRAVEL_LLM_MODEL` | `ai/qwen3:4b-thinking-2507-q4_K_M` | Local reasoning model |
 | `KRAVEL_LLM_MAX_TURNS` | `6` | Qwen tool-loop limit |
+| `KRAVEL_LLM_REASONING_BUDGET` | `384` | Bounds hidden reasoning so tool calls and reports complete |
 | `KRAVEL_MLFLOW_URL` | internal MLflow Service | Tracking endpoint |
 | `KRAVEL_POLICY_HIGH_CONFIDENCE` | `0.85` | Routine-route confidence threshold |
 | `KRAVEL_POLICY_MINIMUM_MARGIN` | `0.20` | Required top-versus-runner-up margin |

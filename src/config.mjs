@@ -60,6 +60,7 @@ export function loadConfig() {
     llmModel: process.env.KRAVEL_LLM_MODEL ?? "ai/qwen3:4b-thinking-2507-q4_K_M",
     llmApiKey: process.env.KRAVEL_LLM_API_KEY ?? "",
     llmMaxTurns: integer("KRAVEL_LLM_MAX_TURNS", 6),
+    llmReasoningBudget: integer("KRAVEL_LLM_REASONING_BUDGET", 384),
     layaUrl: process.env.KRAVEL_LAYA_URL ?? "http://kravel-laya.kravel-ai.svc.cluster.local:8000",
     layaApiKey: process.env.KRAVEL_LAYA_API_KEY ?? "",
     layaModel: process.env.KRAVEL_LAYA_MODEL ?? "english",

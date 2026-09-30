@@ -15,6 +15,7 @@ export class KubernetesWatcher {
     this.onInfo = onInfo;
     this.stopped = false;
     this.requests = new Set();
+    this.resourceTypes = new Map();
     this.token = "";
     this.ca = undefined;
   }
@@ -69,9 +70,31 @@ export class KubernetesWatcher {
     this.store.recordResourceChange({ clusterId: this.clusterId, source: "watch", action: type, object });
   }
 
+  rememberResourceType(path, payload) {
+    const listKind = String(payload?.kind ?? "");
+    const kind = listKind.endsWith("List") ? listKind.slice(0, -4) : "";
+    const apiVersion = String(payload?.apiVersion ?? "");
+    if (!kind || !apiVersion) throw new Error(`Kubernetes list ${path} omitted apiVersion or kind`);
+    const resourceType = { apiVersion, kind };
+    this.resourceTypes.set(path, resourceType);
+    return resourceType;
+  }
+
+  withResourceType(path, object) {
+    if (!object || object.kind === "Status") return object;
+    const resourceType = this.resourceTypes.get(path);
+    if (!resourceType) throw new Error(`Kubernetes resource type for ${path} is unknown; list it before watching`);
+    return {
+      ...object,
+      apiVersion: object.apiVersion ?? resourceType.apiVersion,
+      kind: object.kind ?? resourceType.kind
+    };
+  }
+
   async list(path) {
     const payload = await this.request(path);
-    for (const object of payload.items ?? []) this.ingest("ADDED", object);
+    this.rememberResourceType(path, payload);
+    for (const object of payload.items ?? []) this.ingest("ADDED", this.withResourceType(path, object));
     return payload.metadata?.resourceVersion ?? "";
   }
 
@@ -97,7 +120,7 @@ export class KubernetesWatcher {
               reject(error);
               return;
             }
-            if (event.type !== "BOOKMARK") this.ingest(event.type, event.object);
+            if (event.type !== "BOOKMARK") this.ingest(event.type, this.withResourceType(path, event.object));
             resourceVersion = event.object?.metadata?.resourceVersion ?? resourceVersion;
           } catch (error) {
             reject(new Error(`Invalid Kubernetes watch event: ${error.message}`));

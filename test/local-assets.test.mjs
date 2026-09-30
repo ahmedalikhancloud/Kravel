@@ -7,6 +7,7 @@ test("local deployment uses internal model endpoints and read-only Kubernetes ac
   assert.match(manifest, /image: kravel:local/);
   assert.match(manifest, /imagePullPolicy: Never/);
   assert.match(manifest, /model-runner\.docker\.internal\/engines\/v1/);
+  assert.match(manifest, /KRAVEL_LLM_REASONING_BUDGET/);
   assert.match(manifest, /kravel-laya\.kravel-ai\.svc\.cluster\.local/);
   assert.match(manifest, /verbs: \["get", "list", "watch"\]/);
   assert.doesNotMatch(manifest, /apiVersion: v1\s+kind: Secret/);
@@ -56,6 +57,7 @@ test("local scripts bind browser ports to loopback and contain no committed cred
   assert.match(scripts, /model context.*kravel-desktop|contextName = "kravel-desktop"/s);
   assert.match(scripts, /http:\/\/127\.0\.0\.1:12434/);
   assert.match(scripts, /Invoke-KravelNativeWithRetry/);
+  assert.match(scripts, /--context-size", "8192"/);
   assert.match(scripts, /Attempts = 4/);
   assert.match(scripts, /Get-AuthenticodeSignature/);
   assert.match(scripts, /O=Docker Inc/);
