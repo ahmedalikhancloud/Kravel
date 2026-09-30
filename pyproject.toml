@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest==9.0.2"]
+test = ["pytest==9.0.3"]
 
 [project.scripts]
 kravel = "kravel.cli:main"
