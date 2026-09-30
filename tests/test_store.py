@@ -1,45 +1,34 @@
-from kravel.store import TemporalStore
+from datetime import datetime, timedelta, timezone
+
+from kravel.store import AuditStore
 
 
-def obj(version, mode="healthy"):
-    return {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "api-config", "namespace": "demo", "resourceVersion": str(version)}, "data": {"STARTUP_MODE": mode}}
+def test_audit_and_investigation_metrics_are_persisted():
+    store = AuditStore()
+    store.record("debugger", "tool.get_pods", actor="qwen", resource="kravel-demo", duration_ms=4.2)
+    store.record_investigation(
+        id="run-1", started_at="2026-09-30T12:00:00Z", finished_at="2026-09-30T12:00:01Z",
+        namespace="kravel-demo", status="success", total_ms=1000, model_ms=800, tool_ms=100,
+        tool_calls=2, input_guardrail_ms=2, output_guardrail_ms=3,
+        mlflow_setup_ms=10, mlflow_overhead_ms=12, mlflow_flush_ms=15, trace_id="trace-1",
+    )
+
+    assert store.audit_entries()[0]["action"] == "tool.get_pods"
+    run = store.investigations()[0]
+    assert run["tool_calls"] == 2
+    assert run["mlflow_flush_ms"] == 15
+    assert store.stats()["investigations"] == 1
 
 
-def test_time_travel_and_diff_are_exact():
-    store = TemporalStore()
-    try:
-        store.record_resource_change(cluster_id="c", action="ADDED", object=obj(1), event_at="2026-01-01T00:00:01Z")
-        store.record_resource_change(cluster_id="c", action="MODIFIED", object=obj(2, "broken"), event_at="2026-01-01T00:00:02Z")
-        before = store.state_at(cluster_id="c", timestamp="2026-01-01T00:00:01.500Z", namespace="demo")
-        after = store.state_at(cluster_id="c", timestamp="2026-01-01T00:00:03Z", namespace="demo")
-        assert before["objects"][0]["data"]["STARTUP_MODE"] == "healthy"
-        assert after["objects"][0]["data"]["STARTUP_MODE"] == "broken"
-        diff = store.diff_states(cluster_id="c", from_at="2026-01-01T00:00:01.500Z", to_at="2026-01-01T00:00:03Z", namespace="demo")
-        assert diff["changeCount"] == 1
-        assert "/data/STARTUP_MODE" in diff["changes"][0]["changedPaths"]
-    finally:
-        store.close()
+def test_proposal_state_and_structured_outputs_round_trip():
+    store = AuditStore()
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    proposal = store.create_proposal(
+        fix_id="fix_image_pull", namespace="kravel-demo", resource="Deployment/image-demo",
+        command="kubectl ...", dry_run=[{"dryRun": True}], expires_at=expires,
+    )
+    updated = store.update_proposal(proposal["id"], status="executed", result={"operations": [{"ok": True}]})
 
-
-def test_out_of_order_insert_repairs_the_following_patch():
-    store = TemporalStore()
-    try:
-        store.record_resource_change(cluster_id="c", action="ADDED", object=obj(1), event_at="2026-01-01T00:00:01Z")
-        store.record_resource_change(cluster_id="c", action="MODIFIED", object=obj(3, "broken"), event_at="2026-01-01T00:00:03Z")
-        store.record_resource_change(cluster_id="c", action="MODIFIED", object=obj(2, "warmup"), event_at="2026-01-01T00:00:02Z")
-        context = store.context_shard(cluster_id="c", incident_at="2026-01-01T00:00:04Z", lookback=10, namespace="demo")
-        final = next(change for change in context["changes"] if change["eventAt"] == "2026-01-01T00:00:03.000Z")
-        assert final["patch"] == [{"op": "replace", "path": "/data/STARTUP_MODE", "value": "broken"}, {"op": "replace", "path": "/metadata/resourceVersion", "value": "3"}]
-    finally:
-        store.close()
-
-
-def test_secret_payload_is_redacted():
-    store = TemporalStore()
-    try:
-        secret = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "db", "namespace": "demo", "resourceVersion": "1"}, "data": {"password": "base64-secret"}}
-        store.record_resource_change(cluster_id="c", action="ADDED", object=secret, event_at="2026-01-01T00:00:01Z")
-        state = store.state_at(cluster_id="c", timestamp="2026-01-01T00:00:02Z")
-        assert state["objects"][0]["data"]["password"] == "<redacted>"
-    finally:
-        store.close()
+    assert updated["dryRun"] == [{"dryRun": True}]
+    assert updated["result"]["operations"][0]["ok"] is True
+    assert store.stats()["executedFixes"] == 1

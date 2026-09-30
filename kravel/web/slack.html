@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local Slack · Kravel Approvals</title>
+  <link rel="stylesheet" href="/ui/slack.css">
+  <script src="/ui/slack.js" defer></script>
+</head>
+<body>
+  <aside>
+    <div class="workspace-logo">K</div>
+    <b>Kravel Demo</b>
+    <nav><span>Channels</span><a class="active"># kravel-approvals</a><a># cluster-ops</a><span>Apps</span><a>🤖 Karl</a></nav>
+  </aside>
+  <main>
+    <header><div><h1># kravel-approvals</h1><p>Human change-control inbox · local only</p></div><span id="mode">LOCAL WORKFLOW</span></header>
+    <div id="tokenWarning" class="warning" hidden>Open the tokenized Local Slack URL printed by <code>demo/local/demo.sh</code>. Approval controls are locked without that one-time local secret.</div>
+    <section id="messages" aria-live="polite"></section>
+    <footer><span>🔒</span> This page can approve only allowlisted, server-dry-run demo fixes. Requests expire after five minutes.</footer>
+  </main>
+</body>
+</html>

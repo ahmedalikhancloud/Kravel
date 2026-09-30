@@ -6,51 +6,37 @@ import sys
 import threading
 
 from .api import create_server
-from .background import EmbeddingClient, PrometheusSampler
+from .broker import ApprovalBroker, create_broker_server
 from .cli import main as cli_main
 from .config import load_config
-from .mcp import run_mcp
-from .store import TemporalStore
-from .watcher import KubernetesWatcher
+from .kube import KubernetesClient
+from .store import AuditStore
 
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     command = argv[0] if argv else "serve"
-    if command in {"pipeline", "report", "probe-resource", "check-llm"}:
+    if command in {"check-llm", "inspect"}:
         return cli_main(argv)
+    if command not in {"serve", "broker"}:
+        raise SystemExit(f"Unknown command: {command}")
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     config = load_config()
-    store = TemporalStore(config.db_path)
-    embedding = EmbeddingClient(config.embedding_url, config.embedding_model, config.embedding_api_key)
-    watcher = KubernetesWatcher(kube=config.kube, resources=config.watch_resources, cluster_id=config.cluster_id, store=store)
-    prometheus = PrometheusSampler(url=config.prometheus_url, interval_ms=config.prometheus_interval_ms, queries=config.prometheus_queries, cluster_id=config.cluster_id, store=store)
-    if command == "mcp":
-        try:
-            run_mcp(store, config)
-        finally:
-            store.close()
-        return 0
-    if command not in {"serve", "serve-watch", "watch"}:
-        raise SystemExit(f"Unknown command: {command}")
-    server = create_server(store, config, embedding) if command in {"serve", "serve-watch"} else None
+    store = AuditStore(config.db_path)
+    kube = KubernetesClient(config.kube)
+    server = create_server(store, config, kube) if command == "serve" else create_broker_server(ApprovalBroker(kube, store, config), config)
+
     def shutdown(_signum=None, _frame=None):
-        watcher.stop_event.set(); prometheus.stop_event.set()
-        if server:
-            threading.Thread(target=server.shutdown, daemon=True).start()
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
     try:
-        prometheus.start()
-        if command in {"serve-watch", "watch"}:
-            watcher.start()
-        if server:
-            logging.info("API listening on %s:%s", config.host, config.port)
-            server.serve_forever()
-        else:
-            signal.pause()
+        logging.info("%s listening on %s:%s", command, config.host, config.port)
+        server.serve_forever()
     finally:
-        watcher.stop(); prometheus.stop(); store.close()
+        server.server_close()
+        store.close()
     return 0
 
 

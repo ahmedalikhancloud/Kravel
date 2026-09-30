@@ -1,48 +1,163 @@
 from __future__ import annotations
 
-from .utils import parse_duration_seconds
+import time
+from datetime import datetime, timezone
+
+from .kube import RESOURCE_MAP
 
 
-TEMPORAL_TOOLS = [
-    {"type": "function", "function": {"name": "rewind_cluster_state", "description": "Reconstruct the exact last-observed Kubernetes object state at a timestamp.", "parameters": {"type": "object", "properties": {"timestamp": {"type": "string"}, "kinds": {"type": "array", "items": {"type": "string"}}, "resource_key": {"type": "string"}}, "required": ["timestamp"]}}},
-    {"type": "function", "function": {"name": "diff_states", "description": "Return deterministic Kubernetes object changes between two timestamps.", "parameters": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "kinds": {"type": "array", "items": {"type": "string"}}}, "required": ["from", "to"]}}},
-    {"type": "function", "function": {"name": "get_incident_context", "description": "Build a time-bounded evidence shard from state changes, Kubernetes events, and metrics. Relevance is not proof of causality.", "parameters": {"type": "object", "properties": {"incident_at": {"type": "string"}, "lookback": {"type": ["string", "number"]}, "resource_key": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}, "required": ["incident_at"]}}},
-    {"type": "function", "function": {"name": "trace_resource", "description": "Trace ownership, selectors, ConfigMap, Secret, volume, and service-account relationships at a timestamp.", "parameters": {"type": "object", "properties": {"timestamp": {"type": "string"}, "resource_key": {"type": "string"}, "max_depth": {"type": "integer", "minimum": 0, "maximum": 8}}, "required": ["timestamp", "resource_key"]}}},
+READ_ONLY_TOOLS = [
+    {"type": "function", "function": {"name": "get_pods", "description": "List Pods and their current container states. Equivalent to a structured kubectl get pods.", "parameters": {"type": "object", "properties": {"namespace": {"type": "string"}, "label_selector": {"type": "string"}}, "required": ["namespace"]}}},
+    {"type": "function", "function": {"name": "get_resource", "description": "Get one Kubernetes resource as sanitized JSON. Secrets are unsupported.", "parameters": {"type": "object", "properties": {"kind": {"type": "string"}, "name": {"type": "string"}, "namespace": {"type": "string"}}, "required": ["kind", "name", "namespace"]}}},
+    {"type": "function", "function": {"name": "describe_resource", "description": "Describe a resource with status, conditions, and related Kubernetes Events.", "parameters": {"type": "object", "properties": {"kind": {"type": "string"}, "name": {"type": "string"}, "namespace": {"type": "string"}}, "required": ["kind", "name", "namespace"]}}},
+    {"type": "function", "function": {"name": "pod_logs", "description": "Read bounded current or previous Pod logs. This never execs into a container.", "parameters": {"type": "object", "properties": {"pod": {"type": "string"}, "namespace": {"type": "string"}, "container": {"type": "string"}, "previous": {"type": "boolean"}, "tail_lines": {"type": "integer", "minimum": 1, "maximum": 500}}, "required": ["pod", "namespace"]}}},
+    {"type": "function", "function": {"name": "get_events", "description": "List recent Kubernetes Events, optionally scoped to one object name.", "parameters": {"type": "object", "properties": {"namespace": {"type": "string"}, "regarding_name": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 200}}, "required": ["namespace"]}}},
+    {"type": "function", "function": {"name": "list_resources", "description": "List supported non-secret Kubernetes resources by kind and optional label selector.", "parameters": {"type": "object", "properties": {"kind": {"type": "string"}, "namespace": {"type": "string"}, "label_selector": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 200}}, "required": ["kind", "namespace"]}}},
 ]
 
 
-def enforce_scope(name: str, args: dict, config, baseline_at: str, incident_at: str, namespace: str) -> dict:
+def enforce_read_scope(name: str, args: dict, default_namespace: str) -> dict:
     scoped = dict(args or {})
-    scoped["cluster_id"] = config.cluster_id
-    if name != "trace_resource":
-        if namespace:
-            scoped["namespace"] = namespace
-        else:
-            scoped.pop("namespace", None)
-    resource_key = scoped.get("resource_key")
-    if namespace and resource_key and str(resource_key).split("|")[2] != namespace:
-        raise ValueError(f"resource_key is outside the fixed namespace scope {namespace}")
-    if name == "rewind_cluster_state":
-        scoped.setdefault("timestamp", incident_at)
-    elif name == "diff_states":
-        scoped.setdefault("from", baseline_at)
-        scoped.setdefault("to", incident_at)
-    elif name == "get_incident_context":
-        scoped.setdefault("incident_at", incident_at)
-        scoped["limit"] = min(max(int(scoped.get("limit", 20)), 1), 30)
-    elif name == "trace_resource":
-        scoped.setdefault("timestamp", incident_at)
+    if name not in {item["function"]["name"] for item in READ_ONLY_TOOLS}:
+        raise ValueError("Unknown read-only tool")
+    scoped["namespace"] = str(scoped.get("namespace") or default_namespace)
+    if scoped["namespace"] in {"*", "all", "all-namespaces"}:
+        raise ValueError("Explicit namespace required; cross-namespace list calls are disabled")
+    if name in {"get_resource", "describe_resource", "list_resources"}:
+        kind = str(scoped.get("kind", "")).lower()
+        if kind not in RESOURCE_MAP or "secret" in kind:
+            raise ValueError("Unsupported or sensitive Kubernetes resource kind")
+    if name == "pod_logs":
+        scoped["tail_lines"] = min(max(int(scoped.get("tail_lines", 120)), 1), 500)
+        scoped["previous"] = bool(scoped.get("previous", False))
+    if name == "get_events":
+        scoped["limit"] = min(max(int(scoped.get("limit", 100)), 1), 200)
+    if name == "list_resources":
+        scoped["limit"] = min(max(int(scoped.get("limit", 100)), 1), 200)
     return scoped
 
 
-def execute_temporal_tool(name: str, args: dict, store, config, embedding_client=None):
-    cluster_id = args.get("cluster_id", config.cluster_id)
-    if name == "rewind_cluster_state":
-        return store.state_at(cluster_id=cluster_id, timestamp=args.get("timestamp"), namespace=args.get("namespace"), kinds=args.get("kinds"), resource_key=args.get("resource_key"))
-    if name == "diff_states":
-        return store.diff_states(cluster_id=cluster_id, from_at=args.get("from"), to_at=args.get("to"), namespace=args.get("namespace"), kinds=args.get("kinds"))
-    if name == "get_incident_context":
-        return store.context_shard(cluster_id=cluster_id, incident_at=args.get("incident_at"), lookback=parse_duration_seconds(args.get("lookback"), 900), namespace=args.get("namespace", ""), resource_key=args.get("resource_key", ""), limit=args.get("limit", 20))
-    if name == "trace_resource":
-        return store.trace_resource(cluster_id=cluster_id, timestamp=args.get("timestamp"), resource_key=args.get("resource_key"), max_depth=args.get("max_depth", 2))
-    raise ValueError(f"Unknown tool: {name}")
+def execute_read_tool(name: str, args: dict, kube):
+    if name == "get_pods":
+        return kube.list_resources("pods", args["namespace"], selector=args.get("label_selector", ""), limit=100)
+    if name == "get_resource":
+        return kube.get_resource(args["kind"], args["name"], args["namespace"])
+    if name == "describe_resource":
+        return kube.describe(args["kind"], args["name"], args["namespace"])
+    if name == "pod_logs":
+        return kube.pod_logs(args["pod"], args["namespace"], args.get("container", ""), args.get("previous", False), args.get("tail_lines", 120))
+    if name == "get_events":
+        return kube.events(args["namespace"], args.get("regarding_name", ""), args.get("limit", 100))
+    if name == "list_resources":
+        return kube.list_resources(args["kind"], args["namespace"], selector=args.get("label_selector", ""), limit=args.get("limit", 100))
+    raise ValueError("Unknown read-only tool")
+
+
+def _container_issue(pod: dict):
+    app = pod.get("metadata", {}).get("labels", {}).get("app", "")
+    known_fix = {"oom-demo": "fix_oom_memory", "image-demo": "fix_image_pull", "crash-demo": "fix_crash_loop"}
+    statuses = pod.get("status", {}).get("containerStatuses", [])
+    for status in statuses:
+        last = status.get("lastState", {}).get("terminated", {})
+        current = status.get("state", {})
+        waiting = current.get("waiting", {})
+        terminated = current.get("terminated", {})
+        if last.get("reason") == "OOMKilled" or terminated.get("reason") == "OOMKilled":
+            return "oomkilled", known_fix.get(app, ""), f"container {status.get('name')} terminated with OOMKilled"
+        reason = waiting.get("reason", "")
+        if reason in {"ImagePullBackOff", "ErrImagePull", "InvalidImageName"}:
+            return "imagepullbackoff", known_fix.get(app, ""), f"container {status.get('name')} is waiting: {reason}"
+        prior_exit = int(last.get("exitCode", 0) or 0)
+        if app != "config-demo" and (reason == "CrashLoopBackOff" or prior_exit != 0 and int(status.get("restartCount", 0) or 0) > 0):
+            evidence = "is waiting: CrashLoopBackOff" if reason == "CrashLoopBackOff" else f"restarted after exit code {prior_exit}"
+            return "crashloopbackoff", known_fix.get(app, ""), f"container {status.get('name')} {evidence}"
+    return "", "", ""
+
+
+def discover_issues(kube, namespace: str) -> dict:
+    started = time.perf_counter()
+    pods = kube.list_resources("pods", namespace, limit=200)["items"]
+    deployments = kube.list_resources("deployments", namespace, limit=100)["items"]
+    configmaps = kube.list_resources("configmaps", namespace, limit=100)["items"]
+    services = kube.list_resources("services", namespace, limit=100)["items"]
+    issues = []
+    for pod in pods:
+        issue_type, fix_id, evidence = _container_issue(pod)
+        if not issue_type:
+            continue
+        name = pod.get("metadata", {}).get("name", "")
+        issues.append({
+            "id": f"{issue_type}:{name}",
+            "type": issue_type,
+            "title": {"oomkilled": "OOMKilled", "imagepullbackoff": "ImagePullBackOff", "crashloopbackoff": "CrashLoopBackOff"}[issue_type],
+            "severity": "critical" if issue_type == "oomkilled" else "warning",
+            "resource": f"Pod/{name}",
+            "evidence": evidence,
+            "fixId": fix_id,
+        })
+    config_broken = False
+    try:
+        config = kube.get_resource("configmaps", "config-demo", namespace)["object"]
+        mode = config.get("data", {}).get("MODE", "")
+        if mode != "healthy":
+            config_broken = True
+            issues.append({"id": "bad_configmap:config-demo", "type": "bad_configmap", "title": "Bad ConfigMap", "severity": "warning", "resource": "ConfigMap/config-demo", "evidence": f"data.MODE is {mode!r}; expected 'healthy'", "fixId": "fix_bad_configmap"})
+    except Exception:
+        pass
+
+    issue_by_pod = {item["resource"].split("/", 1)[1]: item for item in issues if item["resource"].startswith("Pod/")}
+    resources = []
+    for pod in pods:
+        metadata, status = pod.get("metadata", {}), pod.get("status", {})
+        name = metadata.get("name", "")
+        issue = issue_by_pod.get(name)
+        app = metadata.get("labels", {}).get("app", "")
+        if not issue and app == "config-demo" and config_broken:
+            issue = next((item for item in issues if item["type"] == "bad_configmap"), None)
+        ready = status.get("phase") == "Running" and bool(status.get("containerStatuses")) and all(item.get("ready") for item in status.get("containerStatuses", []))
+        resources.append({
+            "kind": "Pod", "name": name, "namespace": namespace,
+            "status": issue["title"] if issue else ("Ready" if ready else status.get("phase", "Unknown")),
+            "health": issue["severity"] if issue else ("healthy" if ready else "warning"),
+            "ready": ready, "issueType": issue["type"] if issue else "",
+        })
+    for deployment in deployments:
+        metadata, spec, status = deployment.get("metadata", {}), deployment.get("spec", {}), deployment.get("status", {})
+        desired = int(spec.get("replicas", 1) or 0)
+        available = int(status.get("availableReplicas", 0) or 0)
+        app = metadata.get("labels", {}).get("app", metadata.get("name", ""))
+        expected_issue = {"oom-demo": "oomkilled", "image-demo": "imagepullbackoff", "crash-demo": "crashloopbackoff", "config-demo": "bad_configmap"}.get(app, "")
+        issue = next((item for item in issues if item["type"] == expected_issue), None)
+        resources.append({
+            "kind": "Deployment", "name": metadata.get("name", ""), "namespace": namespace,
+            "status": issue["title"] if issue else f"{available}/{desired} available",
+            "health": issue["severity"] if issue else ("healthy" if desired == available else "warning"),
+            "ready": desired == available, "issueType": issue["type"] if issue else "",
+        })
+    for configmap in configmaps:
+        name = configmap.get("metadata", {}).get("name", "")
+        if name == "kube-root-ca.crt":
+            continue
+        broken = name == "config-demo" and config_broken
+        resources.append({
+            "kind": "ConfigMap", "name": name, "namespace": namespace,
+            "status": "Invalid data" if broken else f"{len(configmap.get('data', {}))} data keys",
+            "health": "warning" if broken else "healthy", "ready": not broken,
+            "issueType": "bad_configmap" if broken else "",
+        })
+    for service in services:
+        name = service.get("metadata", {}).get("name", "")
+        resources.append({
+            "kind": "Service", "name": name, "namespace": namespace,
+            "status": service.get("spec", {}).get("type", "ClusterIP"),
+            "health": "healthy", "ready": True, "issueType": "",
+        })
+    return {
+        "namespace": namespace,
+        "observedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "podCount": len(pods),
+        "healthyPods": sum(1 for pod in pods if pod.get("status", {}).get("phase") == "Running" and all(item.get("ready") for item in pod.get("status", {}).get("containerStatuses", []))),
+        "issues": issues,
+        "resources": resources,
+        "durationMs": (time.perf_counter() - started) * 1000,
+    }

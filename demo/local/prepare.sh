@@ -14,33 +14,47 @@ if curl -fsS --max-time 5 http://127.0.0.1:12434/engines/v1/models >/dev/null 2>
 fi
 docker model status || die "Enable Docker Desktop Model Runner, GPU inference, and localhost TCP port 12434, then retry."
 
-section "Downloading the local Qwen profile: $QWEN_MODEL"
+section "Downloading the local Qwen debugger profile: $QWEN_MODEL"
 retry docker model pull "$QWEN_MODEL"
 docker model configure --context-size "$QWEN_CONTEXT" "$QWEN_MODEL"
 docker model run --detach "$QWEN_MODEL"
 
-section "Building Python Kravel and CPU-only Laya"
+section "Building the Kravel debugger"
 docker build --tag kravel:local "$KRAVEL_ROOT"
-docker build --tag kravel-laya:local --file "$KRAVEL_ROOT/demo/local/laya.Dockerfile" "$KRAVEL_ROOT"
 
-section "Caching workload and observability images"
+section "Caching demo and observability images"
 for image in busybox:1.36 prom/prometheus:v3.13.3 grafana/grafana:13.1.6 ghcr.io/mlflow/mlflow:v3.14.0; do retry docker pull "$image"; done
 
-section "Starting Laya and its persistent model cache"
-kubectl apply -f "$KRAVEL_ROOT/deploy/laya-local.yaml"
-kubectl -n kravel-ai rollout restart deployment/kravel-laya
-rollout kravel-ai kravel-laya 12m
+section "Removing obsolete Laya resources"
+kubectl delete namespace kravel-ai --ignore-not-found --wait=true
+docker image rm kravel-laya:local >/dev/null 2>&1 || true
 
-section "Starting Kravel and the observability stack"
+section "Creating the local-only approval credential"
+kubectl create namespace kravel-system --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace kravel-demo --dry-run=client -o yaml | kubectl apply -f -
+approval_token="${KRAVEL_LOCAL_APPROVAL_TOKEN:-$(openssl rand -hex 24)}"
+kubectl -n kravel-system create secret generic kravel-approval-token --from-literal="token=$approval_token" --dry-run=client -o yaml | kubectl apply -f -
+if [[ -n "${SLACK_BOT_TOKEN:-}" && -n "${SLACK_CHANNEL_ID:-}" ]]; then
+  kubectl -n kravel-system create secret generic kravel-slack --from-literal="bot-token=$SLACK_BOT_TOKEN" --from-literal="channel-id=$SLACK_CHANNEL_ID" --dry-run=client -o yaml | kubectl apply -f -
+  printf 'Real Slack reaction polling enabled. Tokens were stored only in a Kubernetes Secret.\n'
+else
+  kubectl -n kravel-system delete secret kravel-slack --ignore-not-found >/dev/null
+  printf 'Using the self-contained Local Slack approval inbox. No Slack credentials are required.\n'
+fi
+
+section "Starting the read-only debugger and isolated approval broker"
 kubectl apply -f "$KRAVEL_ROOT/deploy/local.yaml"
 configure_kravel_model
-kubectl apply -f "$KRAVEL_ROOT/deploy/observability-local.yaml"
+kubectl -n kravel-system rollout restart deployment/kravel deployment/kravel-approval-broker >/dev/null
 rollout kravel-system kravel 4m
+rollout kravel-system kravel-approval-broker 4m
+
+section "Starting Prometheus, Grafana, and MLflow"
+kubectl apply -f "$KRAVEL_ROOT/deploy/observability-local.yaml"
 for deployment in kravel-prometheus kravel-grafana kravel-mlflow; do rollout kravel-observability "$deployment" 6m; done
 
-section "Checking in-cluster access to Docker Model Runner"
+section "Checking local Qwen connectivity from the read-only agent"
 kubectl -n kravel-system exec deployment/kravel -- python -m kravel.cli check-llm
 
-printf '\nPreparation complete. Run: bash demo/local/demo.sh --scenario escalation\n'
+printf '\nPreparation complete. Run: bash demo/local/demo.sh\n'
 printf 'Fast model: %s\n' "$QWEN_MODEL"
-printf 'For the slower reasoning comparison: KRAVEL_QWEN_PROFILE=thinking bash demo/local/prepare.sh\n'

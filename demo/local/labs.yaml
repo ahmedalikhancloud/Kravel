@@ -1,0 +1,132 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kravel-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oom-demo
+  namespace: kravel-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: oom-demo}
+  template:
+    metadata:
+      labels: {app: oom-demo}
+    spec:
+      containers:
+        - name: oom-demo
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args: ["exec sleep 86400"]
+          resources:
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {cpu: 100m, memory: 32Mi}
+          volumeMounts:
+            - {name: memory, mountPath: /oom}
+      volumes:
+        - name: memory
+          emptyDir: {medium: Memory, sizeLimit: 160Mi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: image-demo
+  namespace: kravel-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: image-demo}
+  template:
+    metadata:
+      labels: {app: image-demo}
+    spec:
+      containers:
+        - name: image-demo
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args: ["exec sleep 86400"]
+          resources:
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {cpu: 100m, memory: 32Mi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crash-demo
+  namespace: kravel-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: crash-demo}
+  template:
+    metadata:
+      labels: {app: crash-demo}
+    spec:
+      containers:
+        - name: crash-demo
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args: ["exec sleep 86400"]
+          resources:
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {cpu: 100m, memory: 32Mi}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-demo
+  namespace: kravel-demo
+data:
+  MODE: healthy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config-demo
+  namespace: kravel-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: config-demo}
+  template:
+    metadata:
+      labels: {app: config-demo}
+    spec:
+      containers:
+        - name: config-demo
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - |
+              mode="$(cat /config/MODE)"
+              echo "config-demo starting with MODE=${mode}"
+              if [ "${mode}" != "healthy" ]; then
+                echo "FATAL: ConfigMap MODE must be healthy, got '${mode}'" >&2
+                exit 23
+              fi
+              exec sleep 86400
+          resources:
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {cpu: 100m, memory: 32Mi}
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: config-demo}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-gateway
+  namespace: kravel-demo
+spec:
+  selector: {app: config-demo}
+  ports:
+    - {name: app, port: 80, targetPort: 8080}

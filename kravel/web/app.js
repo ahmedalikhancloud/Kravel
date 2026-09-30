@@ -1,499 +1,312 @@
-"use strict";
-
 const $ = (selector) => document.querySelector(selector);
 const elements = {
-  namespace: $("#namespaceSelect"), collector: $("#collectorStatus"), refresh: $("#refreshButton"), live: $("#liveButton"),
-  search: $("#resourceSearch"), filters: $("#kindFilters"), list: $("#resourceList"), resourceCount: $("#resourceCount"),
-  title: $("#snapshotTitle"), selectedTime: $("#selectedTime"), banner: $("#timeBanner"), grid: $("#topologyGrid"),
-  edges: $("#edgeLayer"), empty: $("#topologyEmpty"), healthy: $("#healthyCount"), warning: $("#warningCount"), broken: $("#brokenCount"),
-  shardList: $("#shardList"), shardSummary: $("#shardSummary"), chatLog: $("#chatLog"), quickActions: $("#quickActions"),
-  chatForm: $("#chatForm"), chatInput: $("#chatInput"), slider: $("#timeSlider"), timelineEvents: $("#timelineEvents"),
-  timelineStart: $("#timelineStart"), timelineEnd: $("#timelineEnd"), timelineDelta: $("#timelineDelta"), eventStream: $("#eventStream"),
-  baseline: $("#baselineButton"), play: $("#playButton"), drawer: $("#resourceDrawer"), drawerKind: $("#drawerKind"),
-  drawerTitle: $("#drawerTitle"), drawerContent: $("#drawerContent"), closeDrawer: $("#closeDrawer"), askKarl: $("#askKarlResource"),
-  copyManifest: $("#copyManifest"), toast: $("#toast"),
+  namespace: $("#namespace"), refresh: $("#refresh"), issueCount: $("#issueCount"), issueList: $("#issueList"),
+  clusterTitle: $("#clusterTitle"), healthyCount: $("#healthyCount"), problemCount: $("#problemCount"), observedAt: $("#observedAt"),
+  clusterWorld: $("#clusterWorld"), resourceWorld: $("#resourceWorld"), worldSelection: $("#worldSelection"), workloadGrid: $("#workloadGrid"),
+  toolPanel: $("#toolPanel"), toolTabs: $(".tool-tabs"), toolOutput: $("#toolOutput"), toolTiming: $("#toolTiming"), proposalList: $("#proposalList"),
+  auditList: $("#auditList"), auditCount: $("#auditCount"), chat: $("#chat"), quickActions: $("#quickActions"), chatForm: $("#chatForm"), chatInput: $("#chatInput"), toast: $("#toast"),
 };
 
-const state = {
-  timeline: [], startMs: Date.now() - 300000, endMs: Date.now(), selectedMs: Date.now(), baselineMs: null,
-  snapshot: [], graph: {nodes: [], edges: []}, diff: {changes: []}, warnings: [], shards: [],
-  selectedKey: "", selectedObject: null, kind: "all", query: "", live: true, loading: false, replayTimer: null,
-};
+const state = {cluster: null, selectedIssue: null, selectedResource: null, proposals: [], audit: [], busy: false};
+const labs = [
+  {type: "oomkilled", name: "oom-demo", title: "Memory pressure", subtitle: "OOMKilled", fixId: "fix_oom_memory"},
+  {type: "imagepullbackoff", name: "image-demo", title: "Image delivery", subtitle: "ImagePullBackOff", fixId: "fix_image_pull"},
+  {type: "crashloopbackoff", name: "crash-demo", title: "Process stability", subtitle: "CrashLoopBackOff", fixId: "fix_crash_loop"},
+  {type: "bad_configmap", name: "config-demo", title: "Runtime configuration", subtitle: "Bad ConfigMap", fixId: "fix_bad_configmap"},
+];
+const pluralKinds = {Pod: "pods", Deployment: "deployments", ConfigMap: "configmaps", Service: "services"};
 
-const KIND_GROUPS = {
-  WORKLOADS: ["Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Pod", "Job", "CronJob"],
-  NETWORK: ["Service", "Endpoints", "EndpointSlice", "Ingress"],
-  CONFIG: ["ConfigMap", "Secret", "ServiceAccount"],
-  STORAGE: ["PersistentVolumeClaim", "PersistentVolume"],
-};
-const KIND_ICONS = {Deployment: "DP", Pod: "PO", ReplicaSet: "RS", Service: "SV", Endpoints: "EP", EndpointSlice: "ES", ConfigMap: "CM", Secret: "SC", ServiceAccount: "SA", PersistentVolumeClaim: "PV", Ingress: "IN", Job: "JB", CronJob: "CJ", StatefulSet: "ST", DaemonSet: "DS"};
-
-function node(tag, className, text) {
-  const item = document.createElement(tag);
-  if (className) item.className = className;
-  if (text !== undefined) item.textContent = text;
-  return item;
+function node(tag, className = "", text = "") {
+  const value = document.createElement(tag);
+  if (className) value.className = className;
+  if (text !== "") value.textContent = text;
+  return value;
 }
 
-function fmtTime(value, includeDate = false) {
-  if (!value) return "—";
-  const date = new Date(value);
-  return new Intl.DateTimeFormat(undefined, includeDate
-    ? {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit"}
-    : {hour: "2-digit", minute: "2-digit", second: "2-digit"}).format(date);
-}
-
-function iso(ms = state.selectedMs) { return new Date(ms).toISOString(); }
 function namespace() { return elements.namespace.value; }
-function resourceKey(object) {
-  const meta = object.metadata || {};
-  return `${object.apiVersion || "v1"}|${object.kind || "Unknown"}|${meta.namespace || "_cluster"}|${meta.name || "unknown"}`;
-}
-function labelFromKey(key) { const bits = String(key).split("|"); return bits.length >= 4 ? `${bits[1]}/${bits[3]}` : key; }
+function formatTime(value) { return value ? new Intl.DateTimeFormat(undefined, {hour: "2-digit", minute: "2-digit", second: "2-digit"}).format(new Date(value)) : "—"; }
+function formatDuration(ms) { return ms < 1000 ? `${ms.toFixed(0)}ms` : `${(ms / 1000).toFixed(2)}s`; }
+function pretty(value) { return JSON.stringify(value, null, 2); }
+function apiPath(path, params = {}) { const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== "" && value !== undefined)); return query.size ? `${path}?${query}` : path; }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {headers: {"content-type": "application/json", ...(options.headers || {})}, ...options});
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.message || payload.error || `Request failed (${response.status})`);
+  const response = await fetch(path, {headers: {"Content-Type": "application/json", ...(options.headers || {})}, ...options});
+  const payload = await response.json().catch(() => ({error: `HTTP ${response.status}`}));
+  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
   return payload;
 }
 
-function queryString(values) {
-  const params = new URLSearchParams();
-  Object.entries(values).forEach(([key, value]) => { if (value !== "" && value !== undefined && value !== null) params.set(key, value); });
-  return params.toString();
+function toast(message) {
+  elements.toast.textContent = message;
+  elements.toast.classList.add("show");
+  setTimeout(() => elements.toast.classList.remove("show"), 2200);
 }
 
-function resourceStatus(object) {
-  const key = resourceKey(object);
-  const meta = object.metadata || {};
-  const status = object.status || {};
-  const warning = state.warnings.find((event) => event.regardingName === meta.name || (object.kind === "Pod" && event.regardingName === meta.name));
-  const waiting = (status.containerStatuses || []).some((entry) => entry.state && entry.state.waiting && /BackOff|Error|Pull/i.test(entry.state.waiting.reason || ""));
-  const unscheduled = (status.conditions || []).some((entry) => entry.type === "PodScheduled" && entry.status === "False");
-  if (warning || waiting || unscheduled) return "broken";
-  if ((state.diff.changes || []).some((change) => change.resourceKey === key)) return "changed";
-  return "healthy";
-}
+function issueFor(type) { return state.cluster?.issues?.find((issue) => issue.type === type); }
+function sameResource(left, right) { return Boolean(left && right && left.kind === right.kind && left.name === right.name && left.namespace === right.namespace); }
 
-function groupFor(kind) {
-  return Object.entries(KIND_GROUPS).find(([, kinds]) => kinds.includes(kind))?.[0] || "OTHER";
-}
-
-async function refreshHealth() {
-  try {
-    const ready = await api("/readyz");
-    elements.collector.className = "collector-status ready";
-    elements.collector.querySelector("b").textContent = `${ready.store.changes} changes stored`;
-  } catch (error) {
-    elements.collector.className = "collector-status error";
-    elements.collector.querySelector("b").textContent = "Collector unavailable";
-  }
-}
-
-async function loadTimeline() {
-  const payload = await api(`/v1/timeline?${queryString({namespace: namespace(), limit: 1000})}`);
-  state.timeline = payload.entries || [];
-  state.startMs = payload.start ? Date.parse(payload.start) : Date.now() - 300000;
-  state.endMs = payload.end ? Date.parse(payload.end) : Date.now();
-  if (state.endMs <= state.startMs) state.startMs = state.endMs - 60000;
-  state.baselineMs ??= state.startMs;
-  if (state.live) state.selectedMs = state.endMs;
-  elements.timelineStart.textContent = fmtTime(state.startMs, true);
-  elements.timelineEnd.textContent = fmtTime(state.endMs, true);
-  renderTimelinePins();
-}
-
-async function loadDemoWindow() {
-  try {
-    const snapshot = await api(`/v1/state/rewind?${queryString({timestamp: new Date(state.endMs).toISOString(), namespace: namespace(), kinds: "ConfigMap"})}`);
-    const anchor = (snapshot.objects || []).find((item) => item.kind === "ConfigMap" && item.metadata?.name === "kravel-demo-window");
-    const baseline = Date.parse(anchor?.data?.baselineAt || "");
-    const incident = Date.parse(anchor?.data?.incidentAt || "");
-    if (Number.isFinite(baseline) && Number.isFinite(incident)) {
-      state.baselineMs = baseline;
-      state.selectedMs = Math.min(state.endMs, incident);
-      state.live = Math.abs(state.endMs - state.selectedMs) < 1000;
-    }
-  } catch (_error) {
-    // Older captures do not include a demo anchor; the timeline remains usable.
-  }
-}
-
-async function loadSnapshot() {
-  if (state.loading) return;
-  state.loading = true;
-  const at = iso();
-  const base = iso(state.baselineMs || state.startMs);
-  try {
-    const common = {timestamp: at, namespace: namespace()};
-    const [graph, diff, context, incidents] = await Promise.all([
-      api(`/v1/state/graph?${queryString(common)}`),
-      api(`/v1/state/diff?${queryString({from: base, to: at, namespace: namespace()})}`),
-      api(`/v1/context?${queryString({incidentAt: at, lookback: "5m", namespace: namespace(), limit: 100})}`),
-      api(`/v1/incidents?${queryString({baselineAt: base, incidentAt: at, namespace: namespace()})}`),
-    ]);
-    state.snapshot = graph.objects || [];
-    state.graph = graph.graph || {nodes: [], edges: []};
-    state.diff = diff;
-    state.warnings = (context.kubernetesEvents || []).filter((event) => event.type === "Warning");
-    state.shards = incidents.shards || [];
-    updateTimeChrome();
-    renderAll();
-  } catch (error) {
-    addMessage(`I couldn’t reconstruct that moment: ${error.message}`, "error");
-  } finally {
-    state.loading = false;
-  }
-}
-
-function updateTimeChrome() {
-  const distance = Math.max(0, state.endMs - state.selectedMs);
-  state.live = distance < 1000;
-  elements.live.classList.toggle("active", state.live);
-  elements.banner.classList.toggle("rewound", !state.live);
-  elements.banner.querySelector("b").textContent = state.live ? "Live state" : `Rewound ${formatDuration(distance)} into the past`;
-  elements.banner.querySelector("span:not(.rewind-glyph)").textContent = state.live ? "Karl is watching the cluster event stream." : `${state.diff.changeCount || 0} resources differ from the chosen baseline.`;
-  elements.selectedTime.textContent = iso();
-  elements.title.textContent = state.live ? "Cluster now" : `Cluster at ${fmtTime(state.selectedMs)}`;
-  elements.timelineDelta.textContent = state.live ? "NOW" : `−${formatDuration(distance)}`;
-  const range = state.endMs - state.startMs;
-  elements.slider.value = range ? Math.round(((state.selectedMs - state.startMs) / range) * 1000) : 1000;
-}
-
-function formatDuration(ms) {
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${seconds % 60}s`;
-}
-
-function renderAll() {
-  renderFilters();
-  renderResourceList();
-  renderTopology();
-  renderShards();
-  renderEventStream();
-}
-
-function renderFilters() {
-  const kinds = [...new Set(state.snapshot.map((item) => item.kind))].sort();
-  const values = ["all", ...kinds];
-  elements.filters.replaceChildren(...values.map((kind) => {
-    const button = node("button", `kind-filter${state.kind === kind ? " active" : ""}`, kind === "all" ? "All" : kind);
-    button.type = "button";
-    button.addEventListener("click", () => { state.kind = kind; renderFilters(); renderResourceList(); });
-    return button;
-  }));
-}
-
-function visibleResources() {
-  return state.snapshot.filter((item) => {
-    const meta = item.metadata || {};
-    return (state.kind === "all" || item.kind === state.kind) && `${item.kind} ${meta.name}`.toLowerCase().includes(state.query.toLowerCase());
-  });
-}
-
-function renderResourceList() {
-  const resources = visibleResources();
-  elements.resourceCount.textContent = String(resources.length);
-  elements.list.replaceChildren(...resources.map((item) => {
-    const key = resourceKey(item);
-    const status = resourceStatus(item);
-    const button = node("button", `resource-item${key === state.selectedKey ? " selected" : ""}`);
-    button.type = "button";
-    const icon = node("span", "resource-icon", KIND_ICONS[item.kind] || item.kind.slice(0, 2).toUpperCase());
-    const text = node("span");
-    text.append(node("b", "", item.metadata?.name || "unnamed"), node("small", "", item.kind));
-    button.append(icon, text, node("i", `status-pip ${status}`));
-    button.addEventListener("click", () => openResource(item));
-    return button;
-  }));
-}
-
-function renderTopology() {
-  const groups = new Map();
-  state.snapshot.forEach((item) => {
-    const group = groupFor(item.kind);
-    if (!groups.has(group)) groups.set(group, []);
-    groups.get(group).push(item);
-  });
-  const order = ["WORKLOADS", "NETWORK", "CONFIG", "STORAGE", "OTHER"].filter((name) => groups.has(name));
-  elements.empty.classList.toggle("hidden", state.snapshot.length > 0);
-  elements.grid.replaceChildren(...order.map((name) => {
-    const lane = node("section", "lane");
-    lane.append(node("div", "lane-title", name));
-    groups.get(name).sort((a, b) => (a.metadata?.name || "").localeCompare(b.metadata?.name || "")).forEach((item) => {
-      const key = resourceKey(item);
-      const status = resourceStatus(item);
-      const button = node("button", `resource-node ${status}${key === state.selectedKey ? " selected" : ""}`);
-      button.type = "button";
-      button.dataset.key = key;
-      button.append(node("i", "node-icon", KIND_ICONS[item.kind] || item.kind.slice(0, 2).toUpperCase()), node("b", "", item.metadata?.name || "unnamed"), node("span", "", `${item.kind} · ${status}`));
-      button.addEventListener("click", () => openResource(item));
-      lane.append(button);
-    });
-    return lane;
-  }));
-  const statuses = state.snapshot.map(resourceStatus);
-  elements.healthy.textContent = statuses.filter((item) => item === "healthy").length;
-  elements.warning.textContent = statuses.filter((item) => item === "changed").length;
-  elements.broken.textContent = statuses.filter((item) => item === "broken").length;
-  requestAnimationFrame(drawEdges);
-}
-
-function drawEdges() {
-  const stage = $("#topologyStage");
-  const stageRect = stage.getBoundingClientRect();
-  const width = Math.max(stage.scrollWidth, stage.clientWidth);
-  const height = Math.max(stage.scrollHeight, stage.clientHeight);
-  elements.edges.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  elements.edges.replaceChildren(...(state.graph.edges || []).map((edge) => {
-    const from = elements.grid.querySelector(`[data-key="${CSS.escape(edge.from)}"]`);
-    const to = elements.grid.querySelector(`[data-key="${CSS.escape(edge.to)}"]`);
-    if (!from || !to) return null;
-    const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
-    const x1 = a.left - stageRect.left + stage.scrollLeft + a.width / 2;
-    const y1 = a.top - stageRect.top + stage.scrollTop + a.height / 2;
-    const x2 = b.left - stageRect.left + stage.scrollLeft + b.width / 2;
-    const y2 = b.top - stageRect.top + stage.scrollTop + b.height / 2;
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    const bend = Math.max(30, Math.abs(x2 - x1) * .35);
-    path.setAttribute("d", `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`);
-    path.setAttribute("class", `edge-line${edge.from === state.selectedKey || edge.to === state.selectedKey ? " highlight" : ""}`);
-    return path;
-  }).filter(Boolean));
-}
-
-function renderTimelinePins() {
-  const span = state.endMs - state.startMs;
-  const recent = state.timeline.slice(-250);
-  elements.timelineEvents.replaceChildren(...recent.map((entry) => {
-    const pin = node("i", `event-pin${entry.severity === "warning" ? " warning" : ""}`);
-    pin.style.left = `${span ? ((Date.parse(entry.at) - state.startMs) / span) * 100 : 100}%`;
-    return pin;
-  }));
-}
-
-function renderEventStream() {
-  const entries = state.timeline.filter((item) => Date.parse(item.at) <= state.selectedMs).slice(-7).reverse();
-  elements.eventStream.replaceChildren(...entries.map((entry) => {
-    const card = node("article", `event-card${entry.severity === "warning" ? " warning" : ""}`);
-    const body = node("div");
-    body.append(node("b", "", entry.title || entry.action), node("span", "", `${fmtTime(entry.at)} · ${entry.entryType}`));
-    card.append(node("i"), body);
-    card.title = entry.note || entry.title || "";
-    card.addEventListener("click", () => {
-      const object = state.snapshot.find((item) => item.metadata?.name === entry.name && item.kind === entry.kind);
-      if (object) openResource(object);
-    });
-    return card;
-  }));
-}
-
-function renderShards(shards = state.shards) {
-  elements.shardSummary.textContent = shards.length ? `${shards.length} evidence shard${shards.length === 1 ? "" : "s"} in this window` : "No causal signatures in this window";
-  elements.shardList.replaceChildren(...shards.map((shard) => {
-    const deterministic = shard.source === "kubernetes_signal";
-    const card = node("article", `shard-card ${deterministic ? "signal" : "laya"}`);
-    card.append(node("b", "", shard.diagnosis.replaceAll("_", " ")), node("span", "", deterministic ? `K8s signal · ${Math.round((shard.score || 0) * 100)}%` : "Laya hypothesis"));
-    return card;
-  }));
-}
-
-function toYaml(value, depth = 0) {
-  const pad = "  ".repeat(depth);
-  if (value === null) return "null";
-  if (typeof value === "boolean" || typeof value === "number") return String(value);
-  if (typeof value === "string") return /[:#\n{}\[\],&*!|>'"%@`]|^\s|\s$/.test(value) ? JSON.stringify(value) : value;
-  if (Array.isArray(value)) return value.length ? value.map((entry) => typeof entry === "object" && entry !== null ? `${pad}-\n${toYaml(entry, depth + 1)}` : `${pad}- ${toYaml(entry, 0)}`).join("\n") : "[]";
-  const keys = Object.keys(value || {});
-  if (!keys.length) return "{}";
-  return keys.map((key) => {
-    const entry = value[key];
-    return typeof entry === "object" && entry !== null ? `${pad}${key}:\n${toYaml(entry, depth + 1)}` : `${pad}${key}: ${toYaml(entry, 0)}`;
-  }).join("\n");
-}
-
-async function openResource(object) {
-  state.selectedObject = object;
-  state.selectedKey = resourceKey(object);
-  elements.drawerKind.textContent = object.kind || "RESOURCE";
-  elements.drawerTitle.textContent = object.metadata?.name || "Manifest";
-  renderResourceList(); renderTopology();
-  await selectDrawerTab("manifest");
-  if (!elements.drawer.open) elements.drawer.showModal();
-}
-
-async function selectDrawerTab(tab) {
-  document.querySelectorAll(".drawer-tabs button").forEach((button) => button.setAttribute("aria-selected", String(button.dataset.tab === tab)));
-  elements.drawerContent.replaceChildren();
-  if (!state.selectedObject) return;
-  if (tab === "manifest") {
-    elements.drawerContent.append(node("pre", "manifest-code", toYaml(state.selectedObject)));
-  } else if (tab === "relations") {
-    const payload = await api(`/v1/state/trace?${queryString({timestamp: iso(), resourceKey: state.selectedKey, maxDepth: 2})}`);
-    const list = node("div", "relation-list");
-    if (!payload.edges.length) list.append(node("div", "relation-card", "No relationships were reconstructed for this object."));
-    payload.edges.forEach((edge) => {
-      const card = node("div", "relation-card");
-      card.append(node("b", "", edge.type.replaceAll("-", " ")), node("span", "", `${labelFromKey(edge.from)} → ${labelFromKey(edge.to)}`));
-      list.append(card);
-    });
-    elements.drawerContent.append(list);
+function resourceShape(resource) {
+  const object = node("span", `model-object model-${resource.kind.toLowerCase()}`);
+  object.setAttribute("aria-hidden", "true");
+  if (resource.kind === "Deployment") {
+    object.append(node("i", "iso-cube layer-back"), node("i", "iso-cube layer-mid"), node("i", "iso-cube layer-front"));
+  } else if (resource.kind === "ConfigMap") {
+    object.append(node("i", "config-slab"), node("i", "config-line line-one"), node("i", "config-line line-two"), node("i", "config-line line-three"));
+  } else if (resource.kind === "Service") {
+    object.append(node("i", "service-ring"), node("i", "service-core"), node("i", "service-ray ray-a"), node("i", "service-ray ray-b"), node("i", "service-ray ray-c"));
   } else {
-    const relevant = (state.diff.changes || []).filter((change) => change.resourceKey === state.selectedKey);
-    const list = node("div", "change-list");
-    if (!relevant.length) list.append(node("div", "change-card", "No change from the chosen baseline to this moment."));
-    relevant.forEach((change) => {
-      const card = node("div", "change-card");
-      card.append(node("b", "", `${change.changeType} · ${change.changedPaths.length} paths`), node("span", "", change.changedPaths.join(", ")));
-      list.append(card);
+    object.append(node("i", "pod-shell"), node("i", "pod-window"), node("i", "pod-foot foot-a"), node("i", "pod-foot foot-b"));
+  }
+  return object;
+}
+
+function selectResource(resource, inspect = true) {
+  state.selectedResource = {kind: resource.kind, name: resource.name, namespace: resource.namespace};
+  state.selectedIssue = state.cluster?.issues?.find((issue) => issue.type === resource.issueType) || null;
+  elements.worldSelection.textContent = `${resource.kind}/${resource.name}`;
+  renderIssues();
+  renderResourceWorld();
+  if (inspect) runTool("get_resource", true);
+}
+
+function renderResourceWorld() {
+  const resources = state.cluster?.resources || [];
+  if (!resources.length) {
+    elements.resourceWorld.replaceChildren(node("div", "world-empty", "No supported resources found"));
+    return;
+  }
+  elements.resourceWorld.replaceChildren(...resources.map((resource, index) => {
+    const button = node("button", `resource-model kind-${resource.kind.toLowerCase()} ${resource.health}${sameResource(state.selectedResource, resource) ? " selected" : ""}`);
+    button.type = "button";
+    button.style.setProperty("--spawn-delay", `${Math.min(index * 36, 420)}ms`);
+    button.setAttribute("aria-label", `Inspect ${resource.kind} ${resource.name}, ${resource.status}`);
+    const label = node("span", "resource-label");
+    label.append(node("b", "", resource.name), node("span", "", `${resource.kind} · ${resource.status}`));
+    button.append(resourceShape(resource), node("i", "health-beacon"), label);
+    button.addEventListener("click", () => selectResource(resource));
+    return button;
+  }));
+}
+
+function renderIssues() {
+  const issues = state.cluster?.issues || [];
+  elements.issueCount.textContent = String(issues.length);
+  if (!issues.length) {
+    elements.issueList.replaceChildren(node("div", "no-issues", "✓ No demo failures detected"));
+    return;
+  }
+  elements.issueList.replaceChildren(...issues.map((issue) => {
+    const button = node("button", `issue ${issue.severity}${state.selectedIssue?.id === issue.id ? " selected" : ""}`);
+    const heading = node("b");
+    heading.append(node("span", "", issue.title), node("span", "", issue.severity));
+    button.append(heading, node("small", "", issue.resource), node("small", "", issue.evidence));
+    button.addEventListener("click", () => {
+      state.selectedIssue = issue;
+      const [kind, name] = issue.resource.split("/", 2);
+      const match = state.cluster?.resources?.find((resource) => resource.kind === kind && resource.name === name)
+        || state.cluster?.resources?.find((resource) => resource.issueType === issue.type);
+      if (match) state.selectedResource = {kind: match.kind, name: match.name, namespace: match.namespace};
+      renderIssues(); renderWorkloads(); renderResourceWorld(); runTool("describe_resource", true);
     });
-    elements.drawerContent.append(list);
+    return button;
+  }));
+}
+
+function renderWorkloads() {
+  elements.workloadGrid.replaceChildren(...labs.map((lab) => {
+    const issue = issueFor(lab.type);
+    const severity = issue?.severity || "healthy";
+    const card = node("article", `workload ${severity}`);
+    card.append(node("span", "kind", "Deployment"), node("h3", "", lab.name), node("span", "status", issue ? lab.subtitle : "Healthy"), node("p", "", issue?.evidence || "Running and ready. Break this lab independently from the terminal."));
+    const actions = node("div", "actions");
+    const inspect = node("button", "", "Inspect");
+    inspect.addEventListener("click", () => {
+      state.selectedIssue = issue || {id: `healthy:${lab.name}`, type: lab.type, resource: `Deployment/${lab.name}`, title: lab.subtitle, fixId: lab.fixId};
+      const resource = state.cluster?.resources?.find((item) => item.kind === "Deployment" && item.name === lab.name);
+      if (resource) selectResource(resource, false);
+      runTool("describe_resource", true);
+    });
+    const propose = node("button", "propose", "Propose fix");
+    propose.disabled = !issue;
+    propose.addEventListener("click", () => createProposal(issue.fixId));
+    actions.append(inspect, propose);
+    card.append(actions);
+    return card;
+  }));
+}
+
+function renderCluster() {
+  const cluster = state.cluster;
+  elements.clusterTitle.textContent = cluster ? `${cluster.resources.length} live objects in ${cluster.namespace}` : "Cluster unavailable";
+  elements.healthyCount.textContent = cluster?.healthyPods ?? "—";
+  elements.problemCount.textContent = cluster?.issues?.length ?? "—";
+  elements.observedAt.textContent = formatTime(cluster?.observedAt);
+  renderIssues(); renderResourceWorld(); renderWorkloads();
+}
+
+function selectedTarget() {
+  if (state.selectedResource) {
+    const {kind, name} = state.selectedResource;
+    return {kind: pluralKinds[kind] || `${kind.toLowerCase()}s`, name, pod: kind === "Pod" ? name : "", regarding: name};
+  }
+  const issue = state.selectedIssue;
+  if (!issue) return {kind: "deployments", name: "crash-demo", pod: "", regarding: ""};
+  const [resourceKind, resourceName] = issue.resource.split("/");
+  if (resourceKind === "Pod") return {kind: "pods", name: resourceName, pod: resourceName, regarding: resourceName};
+  return {kind: pluralKinds[resourceKind] || `${resourceKind.toLowerCase()}s`, name: resourceName, pod: "", regarding: resourceName};
+}
+
+async function runTool(tool, focus = false) {
+  const target = selectedTarget();
+  const argumentsByTool = {
+    get_pods: {namespace: namespace()},
+    get_resource: {namespace: namespace(), kind: target.kind, name: target.name},
+    get_events: {namespace: namespace(), regarding_name: target.regarding, limit: 100},
+    describe_resource: {namespace: namespace(), kind: target.kind, name: target.name},
+    pod_logs: {namespace: namespace(), pod: target.pod, previous: true, tail_lines: 120},
+  };
+  if (tool === "pod_logs" && !target.pod) {
+    const podIssue = state.cluster?.issues?.find((issue) => issue.resource.startsWith("Pod/"));
+    if (!podIssue) return toast("Select a failing Pod first");
+    argumentsByTool.pod_logs.pod = podIssue.resource.split("/")[1];
+  }
+  elements.toolOutput.textContent = `$ ${tool.replaceAll("_", " ")}\ncollecting read-only evidence…`;
+  elements.toolTabs.querySelectorAll("button").forEach((button) => button.classList.toggle("active", button.dataset.tool === tool));
+  if (focus) elements.toolPanel.scrollIntoView({behavior: "smooth", block: "center"});
+  try {
+    const payload = await api("/v1/tools/run", {method: "POST", body: JSON.stringify({tool, namespace: namespace(), arguments: argumentsByTool[tool]})});
+    elements.toolOutput.textContent = pretty(payload.result);
+    elements.toolTiming.textContent = `${tool} · ${formatDuration(payload.durationMs)}`;
+    await loadAudit();
+  } catch (error) {
+    elements.toolOutput.textContent = `ERROR: ${error.message}`;
+    elements.toolTiming.textContent = "tool failed";
   }
 }
 
-function addMessage(text, type = "system", meta = "") {
-  const message = node("div", `message ${type}`, text);
-  if (meta) message.append(node("div", "message-meta", meta));
-  elements.chatLog.append(message);
-  elements.chatLog.scrollTop = elements.chatLog.scrollHeight;
+function addMessage(text, role = "system", title = "") {
+  const message = node("div", `message ${role}`);
+  if (title) message.append(node("h3", "", title));
+  message.append(node("div", "", text));
+  elements.chat.append(message);
+  elements.chat.scrollTop = elements.chat.scrollHeight;
   return message;
 }
 
-function setQuickActions(options = [], approval = false) {
-  elements.quickActions.replaceChildren(...options.map((label) => {
-    const button = node("button", `quick-chip${approval && /approve/i.test(label) ? " approve" : ""}`, label);
-    button.type = "button";
-    button.addEventListener("click", () => handleQuickAction(label));
+function setQuickActions(actions) {
+  elements.quickActions.replaceChildren(...actions.map(({label, run}) => {
+    const button = node("button", "", label);
+    button.addEventListener("click", run);
     return button;
   }));
 }
 
-async function askKarl(payload, userText = "") {
-  if (userText) addMessage(userText, "user");
-  const thinking = addMessage("Karl is reading the reconstructed state…", "system");
-  thinking.classList.add("thinking");
-  try {
-    const response = await api("/v1/karl/chat", {method: "POST", body: JSON.stringify({namespace: namespace(), at: iso(), baselineAt: iso(state.baselineMs || state.startMs), resourceKey: state.selectedKey, ...payload})});
-    thinking.remove();
-    addMessage(response.message, "system", response.kind === "reconstruction" ? `${response.diff.changeCount} changed resources · ${response.warnings.length} warnings` : "");
-    setQuickActions(response.options || [], response.kind === "approval_request");
-    if (response.resource) {
-      const existing = state.snapshot.find((item) => resourceKey(item) === state.selectedKey);
-      if (existing) openResource(existing);
-    }
-    return response;
-  } catch (error) {
-    thinking.remove(); addMessage(error.message, "error"); return null;
-  }
-}
-
-async function runAnalysis() {
+async function askKarl(message) {
+  if (state.busy || !message.trim()) return;
+  state.busy = true;
+  addMessage(message, "user");
+  const waiting = addMessage("Karl is using only get/list/describe/events/logs…", "system");
   setQuickActions([]);
   const started = performance.now();
-  const progress = addMessage("Approved. The local guarded investigation is running; no cluster mutation is permitted.", "system");
-  progress.classList.add("thinking");
-  const timer = setInterval(() => { progress.textContent = `Guarded investigation in progress · ${((performance.now() - started) / 1000).toFixed(1)}s`; }, 250);
   try {
-    const payload = await api("/v1/karl/analyze", {method: "POST", body: JSON.stringify({approved: true, baselineAt: iso(state.baselineMs || state.startMs), incidentAt: iso(), namespace: namespace(), scenario: "karl_ui"})});
-    clearInterval(timer); progress.remove();
-    const result = payload.result;
-    const card = node("article", "analysis-card");
-    card.append(node("h3", "", `${result.decision.replaceAll("_", " ")} · ${result.route.replaceAll("_", " ")}`));
-    card.append(node("p", "", result.qwen?.report || `High-confidence read-only runbook selected. ${result.predefinedAutomation?.matchedChanges?.length || 0} matching changes were verified.`));
-    const timings = node("dl");
-    [["Laya", result.stageMetrics.laya_inference || 0], ["Qwen", result.stageMetrics.qwen_inference || 0], ["Trace flush", result.stageMetrics.mlflow_trace_flush || 0], ["Total", payload.totalMs]].forEach(([label, value]) => { timings.append(node("dt", "", label), node("dd", "", `${(value / 1000).toFixed(2)}s`)); });
-    card.append(timings);
-    elements.chatLog.append(card);
-    elements.chatLog.scrollTop = elements.chatLog.scrollHeight;
-    renderShards(result.evidence.shards || []);
-    addMessage(`Human review is still required. Remediation executed: ${String(result.proposal.remediationExecuted)}. MLflow trace ${payload.traceId || "unavailable"}.`, "system");
-    setQuickActions(["Show changes in window", "Return to live state"]);
+    const payload = await api("/v1/chat", {method: "POST", body: JSON.stringify({message, namespace: namespace()})});
+    waiting.remove();
+    const card = addMessage(payload.report, "system", "Grounded diagnosis");
+    const metrics = node("div", "metrics");
+    metrics.append(node("span", "", `total ${formatDuration(payload.timings.totalMs)}`), node("span", "", `Qwen ${formatDuration(payload.timings.modelMs)}`), node("span", "", `${payload.tools.length} tools`), node("span", "", `trace ${payload.traceId ? payload.traceId.slice(0, 11) : "offline"}`));
+    card.append(metrics);
+    setQuickActions([
+      ...payload.suggestedFixes.map((fix) => ({label: `Propose ${fix.title}`, run: () => createProposal(fix.id)})),
+      {label: "Show Events", run: () => runTool("get_events", true)},
+      {label: "Show previous logs", run: () => runTool("pod_logs", true)},
+    ]);
+    elements.toolTiming.textContent = `agent · ${formatDuration(performance.now() - started)}`;
+    await Promise.all([loadAudit(), loadProposals()]);
   } catch (error) {
-    clearInterval(timer); progress.remove(); addMessage(`Investigation failed safely: ${error.message}`, "error");
+    waiting.remove();
+    addMessage(`Investigation failed: ${error.message}`, "error");
+  } finally {
+    state.busy = false;
   }
 }
 
-async function handleQuickAction(label) {
-  const lower = label.toLowerCase();
-  if (lower.includes("approve investigation")) return runAnalysis();
-  if (lower.includes("return to live")) return goLive();
-  if (lower.includes("rewind 60")) {
-    state.live = false; state.selectedMs = Math.max(state.startMs, state.selectedMs - 60000); await loadSnapshot();
-    return askKarl({action: "reconstruct"}, "Rewind 60 seconds");
-  }
-  if (lower.includes("explain selected")) {
-    if (!state.selectedKey) return addMessage("Select a resource on the map first and I’ll explain its reconstructed state.", "system");
-    return askKarl({action: "explain_resource"}, label);
-  }
-  if (lower.includes("warning")) return askKarl({action: "warnings"}, label);
-  if (lower.includes("deep investigation") || lower.includes("prepare")) return askKarl({action: "message", message: "Investigate the root cause"}, label);
-  if (lower.includes("reconstruct") || lower.includes("deterministic") || lower.includes("changes in window")) return askKarl({action: "reconstruct"}, label);
-  if (lower.includes("inspect first change")) {
-    const key = state.diff.changes?.[0]?.resourceKey;
-    const object = state.snapshot.find((item) => resourceKey(item) === key);
-    if (object) return openResource(object);
-    return addMessage("The first changed object no longer exists at this timestamp. Use the timeline to inspect it before deletion.", "system");
-  }
-  return askKarl({action: "message", message: label}, label);
-}
-
-async function goLive() {
-  state.live = true; state.selectedMs = state.endMs; elements.slider.value = 1000; await loadSnapshot();
-}
-
-function toast(message) {
-  elements.toast.textContent = message; elements.toast.classList.add("show");
-  clearTimeout(toast.timer); toast.timer = setTimeout(() => elements.toast.classList.remove("show"), 1800);
-}
-
-let sliderTimer;
-elements.slider.max = "1000";
-elements.slider.addEventListener("input", () => {
-  const ratio = Number(elements.slider.value) / 1000;
-  state.selectedMs = state.startMs + (state.endMs - state.startMs) * ratio;
-  state.live = ratio > .999;
-  updateTimeChrome();
-  clearTimeout(sliderTimer); sliderTimer = setTimeout(loadSnapshot, 180);
-});
-elements.search.addEventListener("input", () => { state.query = elements.search.value; renderResourceList(); });
-elements.refresh.addEventListener("click", async () => { await loadTimeline(); await loadSnapshot(); toast("Cluster memory refreshed"); });
-elements.live.addEventListener("click", goLive);
-elements.namespace.addEventListener("change", async () => { state.baselineMs = null; await loadTimeline(); await loadDemoWindow(); await loadSnapshot(); });
-elements.baseline.addEventListener("click", () => { state.baselineMs = state.selectedMs; toast(`Baseline set at ${fmtTime(state.baselineMs)}`); loadSnapshot(); });
-elements.play.addEventListener("click", () => {
-  if (state.replayTimer) { clearInterval(state.replayTimer); state.replayTimer = null; elements.play.textContent = "▶ Replay"; return; }
-  state.live = false; if (state.selectedMs >= state.endMs - 1000) state.selectedMs = state.startMs;
-  elements.play.textContent = "Ⅱ Pause";
-  state.replayTimer = setInterval(async () => {
-    state.selectedMs = Math.min(state.endMs, state.selectedMs + Math.max((state.endMs - state.startMs) / 40, 1000));
-    await loadSnapshot();
-    if (state.selectedMs >= state.endMs) { clearInterval(state.replayTimer); state.replayTimer = null; elements.play.textContent = "▶ Replay"; }
-  }, 850);
-});
-elements.chatForm.addEventListener("submit", async (event) => {
-  event.preventDefault(); const message = elements.chatInput.value.trim(); if (!message) return;
-  elements.chatInput.value = ""; await askKarl({action: "message", message}, message);
-});
-elements.closeDrawer.addEventListener("click", () => elements.drawer.close());
-document.querySelectorAll(".drawer-tabs button").forEach((button) => button.addEventListener("click", () => selectDrawerTab(button.dataset.tab)));
-elements.askKarl.addEventListener("click", () => { elements.drawer.close(); askKarl({action: "explain_resource"}, `Explain ${labelFromKey(state.selectedKey)}`); });
-elements.copyManifest.addEventListener("click", async () => { if (!state.selectedObject) return; await navigator.clipboard.writeText(toYaml(state.selectedObject)); toast("Manifest copied"); });
-window.addEventListener("resize", () => requestAnimationFrame(drawEdges));
-
-async function init() {
-  await refreshHealth();
+async function createProposal(fixId) {
   try {
-    await loadTimeline(); await loadDemoWindow(); await loadSnapshot();
-    const greeting = await askKarl({action: "greet"});
-    if (!greeting) setQuickActions(["Reconstruct this moment", "Show warning events"]);
+    const proposal = await api("/v1/proposals", {method: "POST", body: JSON.stringify({fixId, namespace: namespace()})});
+    toast("Dry run passed. Approval request created.");
+    addMessage(`Prepared ${proposal.fix_id}. The broker dry-run passed and is waiting up to five minutes for a human 👍 in Local Slack${proposal.slack_ts ? " or real Slack" : ""}.`, "system", "Approval required");
+    await Promise.all([loadProposals(), loadAudit()]);
   } catch (error) {
-    addMessage(`Kravel UI is ready, but the local API did not return cluster state: ${error.message}`, "error");
+    addMessage(`Could not create proposal: ${error.message}`, "error");
   }
-  setInterval(refreshHealth, 10000);
-  setInterval(async () => { if (state.live && !state.loading) { await loadTimeline(); await loadSnapshot(); } }, 15000);
 }
 
-init();
+function renderProposals() {
+  if (!state.proposals.length) {
+    elements.proposalList.replaceChildren(node("div", "empty-state", "No proposed changes. Diagnose a broken lab, then prepare an allowlisted fix."));
+    return;
+  }
+  elements.proposalList.replaceChildren(...state.proposals.map((proposal) => {
+    const card = node("article", `proposal ${proposal.status}`);
+    const summary = node("div");
+    summary.append(node("h3", "", `${proposal.fix_id} · ${proposal.resource}`), node("span", "deadline", proposal.status === "pending" ? `expires ${formatTime(proposal.expires_at)}` : `approved by ${proposal.approval_actor || "—"}`));
+    card.append(summary, node("span", "status-pill", proposal.status), node("code", "", proposal.command));
+    const details = node("details");
+    details.append(node("summary", "", "Server dry-run output"), node("pre", "", pretty(proposal.dryRun)));
+    card.append(details);
+    return card;
+  }));
+}
+
+function renderAudit() {
+  elements.auditCount.textContent = String(state.audit.length);
+  if (!state.audit.length) {
+    elements.auditList.replaceChildren(node("div", "empty-state", "Audit trail is empty."));
+    return;
+  }
+  elements.auditList.replaceChildren(...state.audit.slice(0, 80).map((entry) => {
+    const row = node("div", "audit-row");
+    row.append(node("time", "", formatTime(entry.at)), node("code", "", entry.component), node("span", "", `${entry.action}${entry.resource ? ` · ${entry.resource}` : ""}`), node("span", `outcome ${entry.outcome}`, entry.outcome));
+    return row;
+  }));
+}
+
+async function loadCluster() { state.cluster = await api(apiPath("/v1/cluster", {namespace: namespace()})); renderCluster(); }
+async function loadProposals() { try { state.proposals = (await api("/v1/proposals")).proposals || []; renderProposals(); } catch { state.proposals = []; renderProposals(); } }
+async function loadAudit() { try { state.audit = (await api("/v1/audit?limit=200")).entries || []; renderAudit(); } catch { state.audit = []; renderAudit(); } }
+
+async function refreshAll() {
+  elements.refresh.disabled = true;
+  try { await Promise.all([loadCluster(), loadProposals(), loadAudit()]); }
+  catch (error) { addMessage(`The debugger API is not ready: ${error.message}`, "error"); }
+  finally { elements.refresh.disabled = false; }
+}
+
+if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  elements.clusterWorld.addEventListener("pointermove", (event) => {
+    const bounds = elements.clusterWorld.getBoundingClientRect();
+    const x = (event.clientX - bounds.left) / bounds.width - .5;
+    const y = (event.clientY - bounds.top) / bounds.height - .5;
+    elements.clusterWorld.style.setProperty("--camera-y", `${x * 6}deg`);
+    elements.clusterWorld.style.setProperty("--camera-x", `${58 - y * 4}deg`);
+  });
+  elements.clusterWorld.addEventListener("pointerleave", () => {
+    elements.clusterWorld.style.setProperty("--camera-y", "0deg");
+    elements.clusterWorld.style.setProperty("--camera-x", "58deg");
+  });
+}
+
+elements.refresh.addEventListener("click", refreshAll);
+elements.namespace.addEventListener("change", () => { state.selectedIssue = null; state.selectedResource = null; refreshAll(); });
+elements.toolTabs.addEventListener("click", (event) => { const button = event.target.closest("button[data-tool]"); if (button) runTool(button.dataset.tool); });
+elements.chatForm.addEventListener("submit", (event) => { event.preventDefault(); const value = elements.chatInput.value.trim(); elements.chatInput.value = ""; askKarl(value); });
+document.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", async () => { await navigator.clipboard.writeText(button.dataset.copy); toast("Command copied to clipboard"); }));
+
+addMessage("Hey, I’m Karl. I can inspect Pods, logs, Events, manifests, controllers, and ConfigMaps with a read-only ServiceAccount. If a demo fix is appropriate, I’ll hand a structured proposal to the separate approval broker—never execute it myself.", "system");
+setQuickActions([
+  {label: "Inspect all Pods", run: () => runTool("get_pods", true)},
+  {label: "Show recent Events", run: () => runTool("get_events", true)},
+  {label: "Diagnose current failures", run: () => askKarl("Diagnose every current failure in kravel-demo. Use Pods, Events, describes, and relevant previous logs. Separate evidence from uncertainty.")},
+]);
+refreshAll();
+setInterval(() => { loadCluster().catch(() => {}); loadProposals(); loadAudit(); }, 5000);

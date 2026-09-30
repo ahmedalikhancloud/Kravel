@@ -1,121 +1,97 @@
 # Kravel
 
-Kravel is a read-only Kubernetes incident agent with temporal memory. It continuously records Kubernetes object changes and Events, reconstructs the cluster at earlier timestamps, classifies incident-specific evidence with Laya and native Kubernetes signals, and conditionally escalates to a local Qwen agent built with LangGraph. Its local temporal cockpit visualizes the reconstructed topology, manifests, changes, warning events, and agent progress through Karl, a pixel-art Kubernetes time-travel copilot.
+Kravel is a local, guarded Kubernetes debugger built for a live demo. Karl—the pixel-art copilot—can inspect Pods, controllers, ConfigMaps, Events, and bounded logs through a strictly read-only ServiceAccount. A separate approval broker can repair four disposable demo failures, but only after Kubernetes server-side dry-run succeeds and a human approves within five minutes.
 
-The supported demo runs entirely on one Windows laptop. Docker Desktop provides Kubernetes and local model inference. It needs no hosted model, API key, Codespace, public endpoint, or KillerCoda session.
+The main browser UI renders the live namespace as an interactive CSS-3D cluster arcade. Click a Pod, Deployment, ConfigMap, or Service to load its sanitized manifest through the same audited read-only tool API used by the agent.
 
-## Incident path
+## What is included
 
-```text
-Kubernetes watch + Events → SQLite temporal reconstruction
-                                  │
-                                  ▼
-               input guardrail → Laya System-1 → output guardrail
-                                  │
-                             policy gate
-                     ┌────────────┴────────────┐
-              routine/high confidence     severe/ambiguous
-                     │                         │
-             read-only runbook       Qwen input guardrail
-                                               │
-                                  LangGraph temporal tools
-                                               │
-                                       one Qwen synthesis
-                                               │
-                                  Qwen output guardrail
-                     └────────────┬────────────┘
-                                  ▼
-                         human-review proposal
-```
+- LangGraph + local Qwen debugging agent with no mutation, shell, exec, proxy, or Secret tools.
+- Read-only Kubernetes tools shaped like `get`, `describe`, `events`, and `logs`.
+- A separate least-privilege approval broker restricted to four named Deployments and one named ConfigMap in `kravel-demo`.
+- Local Slack-style approval inbox by default; real Slack reactions are optional.
+- Five-minute approval expiry, structured server dry-run, fixed repair catalog, and an append-only SQLite audit trail.
+- Prometheus, a provisioned Grafana dashboard, and persistent MLflow traces with nested spans for guardrails, Qwen calls, tools, and tracing overhead.
+- Independent OOMKilled, ImagePullBackOff, CrashLoopBackOff, and bad ConfigMap labs.
+- No Groq, Codespaces, hosted model, public callback URL, or API key required.
 
-No remediation is executed. Both branches end at `awaiting_human_review` with `remediationExecuted: false`.
+## Fast local start on Windows
 
-## Real tracing and metrics
+Prerequisites: Docker Desktop with Kubernetes and Model Runner enabled, Git for Windows, and the Docker Desktop Kubernetes context selected.
 
-Each pipeline run creates one MLflow trace with nested spans for reconstruction, both Laya guardrails, Laya inference, the policy gate, temporal tools, Qwen inference, the Qwen output guardrail, and proposal creation. Kravel separately measures MLflow setup, synchronous span overhead, and the explicit server flush that makes the trace durable. Trace inputs and outputs contain bounded metadata such as counts, decisions, and timings—not raw cluster evidence, prompts, reports, URLs, or credentials.
+From Command Prompt or PowerShell:
 
-Prometheus and Grafana expose the same stage latencies, model timings, route, Laya probabilities, tool count, trace ID, and aggregated latency distributions.
-
-## Local components
-
-| Component | Location | Purpose |
-|---|---|---|
-| Docker Desktop Kubernetes | one local node | Runs workloads and services |
-| Kravel (Python 3.12) | `kravel-system` | Watcher, temporal store, API, cockpit, LangGraph harness |
-| Karl | Kravel cockpit | Grounded navigation, progress, options, and investigation approval |
-| Laya | `kravel-ai`, CPU | Scores only ambiguous incident shards |
-| Qwen3 4B Instruct | Docker Model Runner, GPU | Fast deep investigation and report synthesis |
-| Prometheus + Grafana | `kravel-observability` | Aggregate stage latency |
-| MLflow | `kravel-observability` | Inspect the nested trace waterfall |
-
-## Quick start
-
-Open **Git Bash** in the repository and run:
-
-```bash
-bash demo/local/prepare.sh
-bash demo/local/demo.sh --scenario escalation
-```
-
-Then open:
-
-- Kravel cockpit: `http://localhost:8080`
-- Grafana: `http://localhost:3000`
-- MLflow: `http://localhost:5000`, then select **Traces**
-
-The cockpit opens on the captured incident window. Drag the timeline to reconstruct earlier cluster states, click any resource to inspect its historical YAML manifest and relationships, or ask Karl to explain the evidence. Deep local investigation requires an explicit UI approval; no remediation is executed.
-
-The `.cmd` launchers call the same Bash files, so these are also valid from PowerShell or Command Prompt and do not depend on PowerShell execution policy:
-
-```text
+```bat
 demo\local\prepare.cmd
-demo\local\demo.cmd --scenario escalation
+demo\local\demo.cmd
 ```
 
-See [DEMO.md](DEMO.md) for the full setup, presentation flow, fast/Thinking model profiles, and troubleshooting.
+`prepare.cmd` downloads the local Qwen profile, builds Kravel, removes obsolete Laya resources, and starts the observability stack. `demo.cmd` creates four healthy labs and prints four localhost URLs.
 
-## Read-only interfaces
+Open the Kravel URL, then break one lab:
 
-LangGraph and the MCP server expose the same bounded temporal tools:
+```bat
+demo\local\scenario.cmd break imagepull
+```
 
-- `rewind_cluster_state(timestamp)`
-- `diff_states(from, to)`
-- `get_incident_context(incident_at, lookback)`
-- `trace_resource(timestamp, resource_key)`
+Refresh Kravel, click the red or amber 3D object, ask Karl to diagnose it, prepare the suggested fix, and approve it in the printed Local Slack URL.
 
-HTTP equivalents are available under `/v1/state/*` and `/v1/context`; `/metrics`, `/healthz`, and `/readyz` support operations.
+Reset every lab without stopping the dashboards:
 
-The local UI additionally uses `/v1/timeline`, `/v1/incidents`, `/v1/karl/chat`, and the approval-gated `/v1/karl/analyze` endpoint. Obvious image-pull, scheduling, and Service/backend contradictions are derived from deterministic Kubernetes evidence. Laya receives only the remaining ambiguous shards instead of the whole namespace-wide event stream.
+```bat
+demo\local\reset.cmd
+```
 
-## Key configuration
+For the full walk-through, see [DEMO.md](DEMO.md).
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `KRAVEL_DB_PATH` | `data/kravel.db` | SQLite path |
-| `KRAVEL_CLUSTER_ID` | hostname | Stable cluster identity |
-| `KRAVEL_LAYA_URL` | internal Laya Service | System-1 endpoint |
-| `KRAVEL_LLM_BASE_URL` | Docker Model Runner | Local OpenAI-compatible endpoint |
-| `KRAVEL_LLM_MODEL` | `ai/qwen3:4b-instruct-2507-q4_K_M` | Fast local Qwen profile |
-| `KRAVEL_LLM_REASONING_BUDGET` | `0` | Hidden-reasoning budget; zero for Instruct |
-| `KRAVEL_LLM_TIMEOUT_SECONDS` | `90` | Local inference timeout |
-| `KRAVEL_MLFLOW_URL` | internal MLflow Service | Trace destination |
-| `KRAVEL_MLFLOW_EXPERIMENT` | `Kravel Local Incident Traces` | Trace experiment |
+## Safety boundary
 
-## Development
+```text
+Browser / Karl
+      │
+      ▼
+Read-only debugger ServiceAccount ── get/list/watch/logs only
+      │ diagnosis + allowlisted fix ID
+      ▼
+Approval broker ServiceAccount ── server dry-run ── 5-minute human approval
+      │
+      └── patch only: oom-demo, image-demo, crash-demo, config-demo
+```
 
-Kravel is Python-only:
+The Qwen process never receives the broker approval token. The broker does not accept arbitrary commands or arbitrary patches: it resolves a fixed fix ID to code-owned structured Kubernetes API operations. Secrets are not a supported read resource.
+
+## Optional real Slack
+
+The self-contained Local Slack page is the easiest demo path. To also post to a real Slack channel, create a bot with `chat:write` and `reactions:read`, invite it to the channel, then set these only in your local shell before running preparation:
 
 ```bash
-python -m venv .venv
-source .venv/Scripts/activate
-pip install -e '.[test]'
-pytest
+export SLACK_BOT_TOKEN='xoxb-...'
+export SLACK_CHANNEL_ID='C...'
+bash demo/local/prepare.sh
 ```
 
-The image uses pinned dependencies from [pyproject.toml](pyproject.toml). The Laya image is pinned separately in [demo/local/laya.Dockerfile](demo/local/laya.Dockerfile).
+The preparation script writes them to an uncommitted Kubernetes Secret. Kravel never returns or logs the token. If those environment variables are absent, preparation deletes any old Slack Secret and uses only the localhost workflow.
 
-## Safety status
+## Local URLs
 
-This is an incident-analysis prototype, not an autonomous remediation system. Kubernetes fields and Events are untrusted input; guardrails reduce risk but are not a security boundary. Validate classifiers, thresholds, and runbooks on labelled incidents before production use. See [docs/security.md](docs/security.md).
+| Page | Default URL | Purpose |
+|---|---|---|
+| Kravel | `http://127.0.0.1:8080` | 3D cluster map, Karl, tools, proposals, audit |
+| Local Slack | printed by `demo.cmd` | approve or reject a dry-run proposal |
+| Grafana | `http://127.0.0.1:3000` | latency, audit, approval, and fix metrics |
+| MLflow | `http://127.0.0.1:5000` | nested investigation traces |
 
-Licensed under Apache-2.0.
+All port-forwards bind only to `127.0.0.1`.
+
+## Developer checks
+
+```bash
+python -m pytest
+bash -n demo/local/*.sh
+node --check kravel/web/app.js
+node --check kravel/web/slack.js
+```
+
+See [architecture](docs/architecture.md), [security](docs/security.md), and [audit trail](docs/audit-trail.md) for the design details.
+
+Apache-2.0 licensed.

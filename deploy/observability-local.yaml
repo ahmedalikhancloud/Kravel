@@ -14,9 +14,12 @@ data:
       scrape_interval: 2s
       evaluation_interval: 2s
     scrape_configs:
-      - job_name: kravel
+      - job_name: kravel-debugger
         static_configs:
           - targets: ["kravel.kravel-system.svc.cluster.local:8080"]
+      - job_name: kravel-approval-broker
+        static_configs:
+          - targets: ["kravel-approval-broker.kravel-system.svc.cluster.local:8090"]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -26,54 +29,32 @@ metadata:
 spec:
   replicas: 1
   selector:
-    matchLabels:
-      app: kravel-prometheus
+    matchLabels: {app: kravel-prometheus}
   template:
     metadata:
-      labels:
-        app: kravel-prometheus
+      labels: {app: kravel-prometheus}
     spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 65534
-        runAsGroup: 65534
-        fsGroup: 65534
+      securityContext: {runAsNonRoot: true, runAsUser: 65534, runAsGroup: 65534, fsGroup: 65534}
       containers:
         - name: prometheus
           image: prom/prometheus:v3.13.3
           args:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.path=/prometheus
-            - --storage.tsdb.retention.time=1h
-            - --storage.tsdb.retention.size=128MB
-          ports:
-            - name: http
-              containerPort: 9090
-          readinessProbe:
-            httpGet:
-              path: /-/ready
-              port: http
-            initialDelaySeconds: 2
-            periodSeconds: 3
+            - --storage.tsdb.retention.time=2h
+            - --storage.tsdb.retention.size=256MB
+          ports: [{name: http, containerPort: 9090}]
+          readinessProbe: {httpGet: {path: /-/ready, port: http}, initialDelaySeconds: 2, periodSeconds: 3}
           resources:
             requests: {cpu: 25m, memory: 64Mi}
             limits: {cpu: 300m, memory: 256Mi}
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
           volumeMounts:
-            - name: config
-              mountPath: /etc/prometheus
-              readOnly: true
-            - name: data
-              mountPath: /prometheus
+            - {name: config, mountPath: /etc/prometheus, readOnly: true}
+            - {name: data, mountPath: /prometheus}
       volumes:
-        - name: config
-          configMap:
-            name: kravel-prometheus-config
-        - name: data
-          emptyDir: {}
+        - {name: config, configMap: {name: kravel-prometheus-config}}
+        - {name: data, emptyDir: {}}
 ---
 apiVersion: v1
 kind: Service
@@ -81,12 +62,8 @@ metadata:
   name: kravel-prometheus
   namespace: kravel-observability
 spec:
-  selector:
-    app: kravel-prometheus
-  ports:
-    - name: http
-      port: 9090
-      targetPort: http
+  selector: {app: kravel-prometheus}
+  ports: [{name: http, port: 9090, targetPort: http}]
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -121,118 +98,28 @@ data:
       "editable": false,
       "graphTooltip": 1,
       "panels": [
-        {
-          "type": "stat",
-          "title": "Observed pipeline total",
-          "id": 1,
-          "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_benchmark_latency_seconds{flow=\"incident_pipeline\",phase=\"end_to_end\"}", "refId": "A"}],
-          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []},
-          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
-        },
-        {
-          "type": "stat",
-          "title": "Laya inference",
-          "id": 2,
-          "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_pipeline_stage_latency_seconds{stage=\"laya_inference\"}", "refId": "A"}],
-          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []},
-          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
-        },
-        {
-          "type": "stat",
-          "title": "Qwen inference",
-          "id": 3,
-          "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_pipeline_stage_latency_seconds{stage=\"qwen_inference\"}", "refId": "A"}],
-          "fieldConfig": {"defaults": {"unit": "s", "decimals": 3}, "overrides": []},
-          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
-        },
-        {
-          "type": "stat",
-          "title": "Qwen temporal tool calls",
-          "id": 4,
-          "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_benchmark_tool_calls{flow=\"incident_pipeline\"}", "refId": "A"}],
-          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
-        },
-        {
-          "type": "bargauge",
-          "title": "Latest latency by pipeline stage",
-          "id": 5,
-          "gridPos": {"h": 10, "w": 14, "x": 0, "y": 5},
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_pipeline_stage_latency_seconds{flow=\"incident_pipeline\"}", "legendFormat": "{{stage}}", "refId": "A"}],
-          "fieldConfig": {"defaults": {"unit": "s", "decimals": 4}, "overrides": []},
-          "options": {"displayMode": "gradient", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
-        },
-        {
-          "type": "bargauge",
-          "title": "Laya diagnosis probabilities",
-          "id": 6,
-          "gridPos": {"h": 10, "w": 10, "x": 14, "y": 5},
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_benchmark_diagnosis_probability{flow=\"incident_pipeline\"}", "legendFormat": "{{diagnosis}}", "refId": "A"}],
-          "fieldConfig": {"defaults": {"min": 0, "max": 1, "unit": "percentunit"}, "overrides": []},
-          "options": {"displayMode": "gradient", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
-        },
-        {
-          "type": "timeseries",
-          "title": "Guardrail latency",
-          "id": 7,
-          "gridPos": {"h": 9, "w": 12, "x": 0, "y": 15},
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [
-            {"expr": "kravel_pipeline_stage_latency_seconds{stage=\"laya_input_guardrail\"}", "legendFormat": "laya input", "refId": "A"},
-            {"expr": "kravel_pipeline_stage_latency_seconds{stage=\"laya_output_guardrail\"}", "legendFormat": "laya output", "refId": "B"},
-            {"expr": "kravel_pipeline_stage_latency_seconds{stage=\"qwen_input_guardrail\"}", "legendFormat": "qwen input", "refId": "C"},
-            {"expr": "kravel_pipeline_stage_latency_seconds{stage=\"qwen_output_guardrail\"}", "legendFormat": "qwen output", "refId": "D"}
-          ],
-          "fieldConfig": {"defaults": {"unit": "s", "decimals": 5}, "overrides": []}
-        },
-        {
-          "type": "timeseries",
-          "title": "Aggregate p95 stage latency",
-          "id": 8,
-          "gridPos": {"h": 9, "w": 12, "x": 12, "y": 15},
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "histogram_quantile(0.95, sum by (stage, le) (kravel_pipeline_stage_latency_distribution_seconds_bucket))", "legendFormat": "{{stage}}", "refId": "A"}],
-          "fieldConfig": {"defaults": {"unit": "s", "decimals": 4}, "overrides": []}
-        },
-        {
-          "type": "stat",
-          "title": "MLflow tracing + durable flush",
-          "id": 9,
-          "gridPos": {"h": 5, "w": 6, "x": 18, "y": 24},
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "sum(kravel_pipeline_stage_latency_seconds{stage=~\"mlflow_setup|mlflow_tracing_overhead|mlflow_trace_flush\"})", "refId": "A"}],
-          "fieldConfig": {"defaults": {"unit": "s", "decimals": 4}, "overrides": []},
-          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
-        },
-        {
-          "type": "stat",
-          "title": "Predefined read-only automation",
-          "id": 10,
-          "gridPos": {"h": 5, "w": 6, "x": 12, "y": 24},
-          "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_pipeline_stage_latency_seconds{stage=\"predefined_automation\"}", "refId": "A"}],
-          "fieldConfig": {"defaults": {"unit": "s", "decimals": 4}, "overrides": []},
-          "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
-        }
+        {"type":"stat","title":"Debugger investigations","id":1,"gridPos":{"h":5,"w":6,"x":0,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum(kravel_debug_investigations_total)","refId":"A"}],"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
+        {"type":"stat","title":"Latest end-to-end","id":2,"gridPos":{"h":5,"w":6,"x":6,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"kravel_debug_latency_seconds{stage=\"end_to_end\"}","refId":"A"}],"fieldConfig":{"defaults":{"unit":"s","decimals":3},"overrides":[]},"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
+        {"type":"stat","title":"Latest Qwen inference","id":3,"gridPos":{"h":5,"w":6,"x":12,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"kravel_debug_latency_seconds{stage=\"qwen_inference\"}","refId":"A"}],"fieldConfig":{"defaults":{"unit":"s","decimals":3},"overrides":[]},"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
+        {"type":"stat","title":"Read-only tool calls","id":4,"gridPos":{"h":5,"w":6,"x":18,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"kravel_debug_tool_calls","refId":"A"}],"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
+        {"type":"bargauge","title":"Latest debugger stage latency","id":5,"gridPos":{"h":9,"w":14,"x":0,"y":5},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"kravel_debug_latency_seconds","legendFormat":"{{stage}}","refId":"A"}],"fieldConfig":{"defaults":{"unit":"s","decimals":4},"overrides":[]},"options":{"displayMode":"gradient","orientation":"horizontal","reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
+        {"type":"timeseries","title":"Input and output guardrail latency","id":6,"gridPos":{"h":9,"w":10,"x":14,"y":5},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"kravel_debug_latency_seconds{stage=~\"input_guardrail|output_guardrail\"}","legendFormat":"{{stage}}","refId":"A"}],"fieldConfig":{"defaults":{"unit":"s","decimals":5},"overrides":[]}},
+        {"type":"timeseries","title":"Audited activity","id":7,"gridPos":{"h":9,"w":12,"x":0,"y":14},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (component, outcome) (kravel_audit_events_total)","legendFormat":"{{component}} · {{outcome}}","refId":"A"}]},
+        {"type":"bargauge","title":"Approval queue by status","id":8,"gridPos":{"h":9,"w":12,"x":12,"y":14},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (status) (kravel_approval_proposals_total)","legendFormat":"{{status}}","refId":"A"}],"options":{"displayMode":"lcd","orientation":"horizontal","reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
+        {"type":"stat","title":"Oldest pending approval","id":9,"gridPos":{"h":5,"w":6,"x":0,"y":23},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"max(kravel_approval_age_seconds)","refId":"A"}],"fieldConfig":{"defaults":{"unit":"s","decimals":0},"overrides":[]},"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
+        {"type":"stat","title":"Human-approved fixes","id":10,"gridPos":{"h":5,"w":6,"x":6,"y":23},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum(kravel_fixes_executed_total)","refId":"A"}],"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
+        {"type":"stat","title":"p95 investigation latency","id":11,"gridPos":{"h":5,"w":6,"x":12,"y":23},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"histogram_quantile(0.95, sum by (le) (kravel_debug_total_latency_distribution_seconds_bucket))","refId":"A"}],"fieldConfig":{"defaults":{"unit":"s","decimals":3},"overrides":[]},"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}},
+        {"type":"stat","title":"Components online","id":12,"gridPos":{"h":5,"w":6,"x":18,"y":23},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum(kravel_component_info)","refId":"A"}],"options":{"reduceOptions":{"calcs":["lastNotNull"],"values":false}}}
       ],
-      "refresh": "2s",
-      "schemaVersion": 41,
-      "tags": ["kravel", "local", "guardrails"],
-      "templating": {"list": []},
-      "time": {"from": "now-15m", "to": "now"},
-      "timezone": "browser",
-      "title": "Kravel Local Incident Pipeline",
-      "uid": "kravel-local-pipeline",
-      "version": 1
+      "refresh":"2s",
+      "schemaVersion":41,
+      "tags":["kravel","kubernetes","approval","audit"],
+      "templating":{"list":[]},
+      "time":{"from":"now-30m","to":"now"},
+      "timezone":"browser",
+      "title":"Kravel Guarded Debugger",
+      "uid":"kravel-guarded-debugger",
+      "version":1
     }
 ---
 apiVersion: apps/v1
@@ -243,82 +130,43 @@ metadata:
 spec:
   replicas: 1
   selector:
-    matchLabels:
-      app: kravel-grafana
+    matchLabels: {app: kravel-grafana}
   template:
     metadata:
-      labels:
-        app: kravel-grafana
+      labels: {app: kravel-grafana}
     spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 472
-        runAsGroup: 472
-        fsGroup: 472
+      securityContext: {runAsNonRoot: true, runAsUser: 472, runAsGroup: 472, fsGroup: 472}
       containers:
         - name: grafana
           image: grafana/grafana:13.1.6
           env:
-            - name: GF_AUTH_ANONYMOUS_ENABLED
-              value: "true"
-            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
-              value: Viewer
-            - name: GF_AUTH_BASIC_ENABLED
-              value: "false"
-            - name: GF_USERS_ALLOW_SIGN_UP
-              value: "false"
-            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
-              value: /var/lib/grafana/dashboards/dashboard.json
-            - name: GF_PLUGINS_PREINSTALL_DISABLED
-              value: "true"
-            - name: GF_ANALYTICS_REPORTING_ENABLED
-              value: "false"
-            - name: GF_ANALYTICS_CHECK_FOR_UPDATES
-              value: "false"
-            - name: GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES
-              value: "false"
-          ports:
-            - name: http
-              containerPort: 3000
-          readinessProbe:
-            httpGet:
-              path: /api/health
-              port: http
-            initialDelaySeconds: 3
-            periodSeconds: 3
+            - {name: GF_AUTH_ANONYMOUS_ENABLED, value: "true"}
+            - {name: GF_AUTH_ANONYMOUS_ORG_ROLE, value: Viewer}
+            - {name: GF_AUTH_BASIC_ENABLED, value: "false"}
+            - {name: GF_USERS_ALLOW_SIGN_UP, value: "false"}
+            - {name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH, value: /var/lib/grafana/dashboards/dashboard.json}
+            - {name: GF_PLUGINS_PREINSTALL_DISABLED, value: "true"}
+            - {name: GF_ANALYTICS_REPORTING_ENABLED, value: "false"}
+            - {name: GF_ANALYTICS_CHECK_FOR_UPDATES, value: "false"}
+            - {name: GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES, value: "false"}
+          ports: [{name: http, containerPort: 3000}]
+          readinessProbe: {httpGet: {path: /api/health, port: http}, initialDelaySeconds: 4, periodSeconds: 3}
           resources:
             requests: {cpu: 100m, memory: 192Mi}
             limits: {cpu: "1", memory: 512Mi}
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
           volumeMounts:
-            - name: provisioning
-              mountPath: /etc/grafana/provisioning/datasources/datasource.yaml
-              subPath: datasource.yaml
-              readOnly: true
-            - name: provisioning
-              mountPath: /etc/grafana/provisioning/dashboards/dashboard-provider.yaml
-              subPath: dashboard-provider.yaml
-              readOnly: true
-            - name: dashboard
-              mountPath: /var/lib/grafana/dashboards
-              readOnly: true
-            - name: data
-              mountPath: /var/lib/grafana
+            - {name: provisioning, mountPath: /etc/grafana/provisioning/datasources/datasource.yaml, subPath: datasource.yaml, readOnly: true}
+            - {name: provisioning, mountPath: /etc/grafana/provisioning/dashboards/dashboard-provider.yaml, subPath: dashboard-provider.yaml, readOnly: true}
+            - {name: dashboard, mountPath: /var/lib/grafana/dashboards, readOnly: true}
+            - {name: data, mountPath: /var/lib/grafana}
       volumes:
-        - name: provisioning
-          configMap:
-            name: kravel-grafana-provisioning
+        - {name: provisioning, configMap: {name: kravel-grafana-provisioning}}
         - name: dashboard
           configMap:
             name: kravel-grafana-provisioning
-            items:
-              - key: dashboard.json
-                path: dashboard.json
-        - name: data
-          emptyDir: {}
+            items: [{key: dashboard.json, path: dashboard.json}]
+        - {name: data, emptyDir: {}}
 ---
 apiVersion: v1
 kind: Service
@@ -326,12 +174,18 @@ metadata:
   name: kravel-grafana
   namespace: kravel-observability
 spec:
-  selector:
-    app: kravel-grafana
-  ports:
-    - name: http
-      port: 3000
-      targetPort: http
+  selector: {app: kravel-grafana}
+  ports: [{name: http, port: 3000, targetPort: http}]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kravel-mlflow-data
+  namespace: kravel-observability
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests: {storage: 1Gi}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -340,62 +194,29 @@ metadata:
   namespace: kravel-observability
 spec:
   replicas: 1
+  strategy: {type: Recreate}
   selector:
-    matchLabels:
-      app: kravel-mlflow
+    matchLabels: {app: kravel-mlflow}
   template:
     metadata:
-      labels:
-        app: kravel-mlflow
+      labels: {app: kravel-mlflow}
     spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000}
       containers:
         - name: mlflow
           image: ghcr.io/mlflow/mlflow:v3.14.0
-          env:
-            - name: MLFLOW_SERVER_ENABLE_JOB_EXECUTION
-              value: "false"
+          env: [{name: MLFLOW_SERVER_ENABLE_JOB_EXECUTION, value: "false"}]
           command: ["mlflow"]
-          args:
-            - server
-            - --host
-            - 0.0.0.0
-            - --port
-            - "5000"
-            - --workers
-            - "1"
-            - --backend-store-uri
-            - sqlite:////mlflow/mlflow.db
-            - --default-artifact-root
-            - /mlflow/artifacts
-            - --allowed-hosts
-            - "*"
-          ports:
-            - name: http
-              containerPort: 5000
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: http
-            initialDelaySeconds: 5
-            periodSeconds: 5
+          args: ["server","--host","0.0.0.0","--port","5000","--workers","1","--backend-store-uri","sqlite:////mlflow/mlflow.db","--default-artifact-root","/mlflow/artifacts","--allowed-hosts","*"]
+          ports: [{name: http, containerPort: 5000}]
+          readinessProbe: {httpGet: {path: /health, port: http}, initialDelaySeconds: 5, periodSeconds: 5}
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {cpu: "1", memory: 768Mi}
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-          volumeMounts:
-            - name: data
-              mountPath: /mlflow
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
+          volumeMounts: [{name: data, mountPath: /mlflow}]
       volumes:
-        - name: data
-          emptyDir: {}
+        - {name: data, persistentVolumeClaim: {claimName: kravel-mlflow-data}}
 ---
 apiVersion: v1
 kind: Service
@@ -403,9 +224,5 @@ metadata:
   name: kravel-mlflow
   namespace: kravel-observability
 spec:
-  selector:
-    app: kravel-mlflow
-  ports:
-    - name: http
-      port: 5000
-      targetPort: http
+  selector: {app: kravel-mlflow}
+  ports: [{name: http, port: 5000, targetPort: http}]

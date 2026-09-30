@@ -4,19 +4,28 @@ metadata:
   name: kravel-system
 ---
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: kravel-demo
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: kravel
+  name: kravel-debugger
   namespace: kravel-system
+automountServiceAccountToken: true
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: kravel-local-observer
+  name: kravel-debugger-readonly
 rules:
   - apiGroups: [""]
-    resources: ["pods", "configmaps", "services", "endpoints", "serviceaccounts", "persistentvolumeclaims", "namespaces"]
+    resources: ["pods", "configmaps", "services", "endpoints", "serviceaccounts", "persistentvolumeclaims", "namespaces", "nodes", "events"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
     verbs: ["get", "list", "watch"]
@@ -24,26 +33,62 @@ rules:
     resources: ["jobs", "cronjobs"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses"]
+    resources: ["ingresses", "networkpolicies"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["events.k8s.io"]
-    resources: ["events"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: kravel-local-observer
+  name: kravel-debugger-readonly
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: kravel-local-observer
+  name: kravel-debugger-readonly
 subjects:
   - kind: ServiceAccount
-    name: kravel
+    name: kravel-debugger
+    namespace: kravel-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kravel-approval-broker
+  namespace: kravel-system
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kravel-demo-fix-executor
+  namespace: kravel-demo
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["oom-demo", "image-demo", "crash-demo", "config-demo"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["config-demo"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kravel-demo-fix-executor
+  namespace: kravel-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kravel-demo-fix-executor
+subjects:
+  - kind: ServiceAccount
+    name: kravel-approval-broker
     namespace: kravel-system
 ---
 apiVersion: v1
@@ -56,6 +101,17 @@ spec:
   resources:
     requests:
       storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kravel-approval-data
+  namespace: kravel-system
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 256Mi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -73,79 +129,55 @@ spec:
     metadata:
       labels:
         app: kravel
+        kravel.dev/component: debugger
     spec:
-      serviceAccountName: kravel
+      serviceAccountName: kravel-debugger
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
-        seccompProfile:
-          type: RuntimeDefault
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: kravel
           image: kravel:local
           imagePullPolicy: Never
-          args: ["python", "-m", "kravel.main", "serve-watch"]
+          args: ["python", "-m", "kravel.main", "serve"]
           env:
-            - name: KRAVEL_HOST
-              value: 0.0.0.0
-            - name: KRAVEL_PORT
-              value: "8080"
-            - name: KRAVEL_DB_PATH
-              value: /data/kravel.db
-            - name: KRAVEL_CLUSTER_ID
-              value: docker-desktop
-            - name: KRAVEL_LAYA_URL
-              value: http://kravel-laya.kravel-ai.svc.cluster.local:8000
-            - name: KRAVEL_LAYA_MODEL
-              value: english
-            - name: KRAVEL_LLM_BASE_URL
-              value: http://model-runner.docker.internal/engines/v1
-            - name: KRAVEL_LLM_MODEL
-              value: ai/qwen3:4b-instruct-2507-q4_K_M
-            - name: KRAVEL_LLM_MAX_TURNS
-              value: "3"
-            - name: KRAVEL_LLM_REASONING_BUDGET
-              value: "0"
-            - name: KRAVEL_LLM_TIMEOUT_SECONDS
-              value: "90"
-            - name: KRAVEL_MLFLOW_URL
-              value: http://kravel-mlflow.kravel-observability.svc.cluster.local:5000
+            - {name: KRAVEL_HOST, value: "0.0.0.0"}
+            - {name: KRAVEL_PORT, value: "8080"}
+            - {name: KRAVEL_DB_PATH, value: "/data/audit.db"}
+            - {name: KRAVEL_CLUSTER_ID, value: "docker-desktop"}
+            - {name: KRAVEL_DEFAULT_NAMESPACE, value: "kravel-demo"}
+            - {name: KRAVEL_BROKER_URL, value: "http://kravel-approval-broker.kravel-system.svc.cluster.local:8090"}
+            - {name: KRAVEL_LLM_BASE_URL, value: "http://model-runner.docker.internal/engines/v1"}
+            - {name: KRAVEL_LLM_MODEL, value: "ai/qwen3:4b-instruct-2507-q4_K_M"}
+            - {name: KRAVEL_LLM_MAX_TURNS, value: "4"}
+            - {name: KRAVEL_LLM_REASONING_BUDGET, value: "0"}
+            - {name: KRAVEL_LLM_TIMEOUT_SECONDS, value: "90"}
+            - {name: KRAVEL_MLFLOW_URL, value: "http://kravel-mlflow.kravel-observability.svc.cluster.local:5000"}
+            - {name: KRAVEL_MLFLOW_EXPERIMENT, value: "Kravel Guarded Debugger"}
           ports:
-            - name: http
-              containerPort: 8080
+            - {name: http, containerPort: 8080}
           readinessProbe:
-            httpGet:
-              path: /readyz
-              port: http
+            httpGet: {path: /readyz, port: http}
             periodSeconds: 3
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
+            httpGet: {path: /healthz, port: http}
             periodSeconds: 10
           resources:
-            requests:
-              cpu: 50m
-              memory: 160Mi
-            limits:
-              cpu: "1"
-              memory: 768Mi
+            requests: {cpu: 50m, memory: 160Mi}
+            limits: {cpu: "1", memory: 768Mi}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
+            capabilities: {drop: ["ALL"]}
           volumeMounts:
-            - name: data
-              mountPath: /data
-            - name: tmp
-              mountPath: /tmp
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
       volumes:
         - name: data
-          persistentVolumeClaim:
-            claimName: kravel-data
+          persistentVolumeClaim: {claimName: kravel-data}
         - name: tmp
           emptyDir: {}
 ---
@@ -155,10 +187,85 @@ metadata:
   name: kravel
   namespace: kravel-system
 spec:
-  type: ClusterIP
-  selector:
-    app: kravel
+  selector: {app: kravel}
   ports:
-    - name: http
-      port: 8080
-      targetPort: http
+    - {name: http, port: 8080, targetPort: http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kravel-approval-broker
+  namespace: kravel-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kravel-approval-broker
+  template:
+    metadata:
+      labels:
+        app: kravel-approval-broker
+        kravel.dev/component: approval-broker
+    spec:
+      serviceAccountName: kravel-approval-broker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: broker
+          image: kravel:local
+          imagePullPolicy: Never
+          args: ["python", "-m", "kravel.main", "broker"]
+          env:
+            - {name: KRAVEL_HOST, value: "0.0.0.0"}
+            - {name: KRAVEL_PORT, value: "8090"}
+            - {name: KRAVEL_DB_PATH, value: "/data/approvals.db"}
+            - {name: KRAVEL_DEFAULT_NAMESPACE, value: "kravel-demo"}
+            - {name: KRAVEL_APPROVAL_TIMEOUT_SECONDS, value: "300"}
+            - name: KRAVEL_APPROVAL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: kravel-approval-token, key: token}
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef: {name: kravel-slack, key: bot-token, optional: true}
+            - name: SLACK_CHANNEL_ID
+              valueFrom:
+                secretKeyRef: {name: kravel-slack, key: channel-id, optional: true}
+          ports:
+            - {name: http, containerPort: 8090}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 3
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 25m, memory: 96Mi}
+            limits: {cpu: 500m, memory: 384Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: kravel-approval-data}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kravel-approval-broker
+  namespace: kravel-system
+spec:
+  selector: {app: kravel-approval-broker}
+  ports:
+    - {name: http, port: 8090, targetPort: http}

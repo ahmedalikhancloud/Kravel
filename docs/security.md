@@ -1,33 +1,33 @@
-# Security notes
+# Security model
 
-Kravel collects operational history that can contain sensitive metadata. Treat its database as production telemetry with a potentially higher blast radius than the live API because it preserves old values.
+Kravel is intentionally a debugger first and a tightly bounded demo repair workflow second.
 
-## Defaults in this repository
+## Guarantees in the local design
 
-- `Secret.data` and `Secret.stringData` are replaced with `<redacted>` before persistence.
-- `metadata.managedFields` is dropped to reduce size and accidental identity retention.
-- The supplied ClusterRole does not grant access to Secret objects.
-- The service is `ClusterIP`, runs as a non-root user, drops Linux capabilities, and uses a read-only root filesystem.
-- API bearer authentication is supported through `KRAVEL_API_TOKEN` but is not automatically enabled.
+- The agent ServiceAccount is read-only and has no Secret, exec, attach, proxy, create, update, patch, or delete permissions.
+- The LLM has no shell tool and no mutation tool. It can return only prose and known fix IDs.
+- Cluster and log text is treated as untrusted input. Instruction-like text is quarantined, credentials are redacted, and evidence is length-bounded before model use.
+- Generated output is redacted and direct mutation commands are withheld. The exact displayed command comes from trusted code, not from Qwen.
+- The broker uses a separate ServiceAccount restricted with `resourceNames` to five disposable objects in `kravel-demo`.
+- The broker accepts no arbitrary command or arbitrary patch.
+- Every proposal must pass Kubernetes server-side dry-run and expire after five minutes without a human decision.
+- The approval token is not mounted into the debugger and is removed from the Local Slack address bar after page load.
+- Port-forwards bind to `127.0.0.1`; no inbound internet endpoint is needed.
+- Slack tokens, when used, come from environment variables and a Kubernetes Secret. They are never embedded in manifests or source.
 
-## Before a real deployment
+## Important limitations
 
-- Put TLS and authentication in front of the HTTP service. Configure an audit webhook credential rather than exposing an anonymous endpoint.
-- Use a narrowly scoped ClusterRole and an explicit allow-list of watched resources.
-- Encrypt the persistent volume and backups. Restrict database access to the Kravel service account.
-- Review audit policy carefully. `RequestResponse` bodies can contain credentials, tokens, environment values, and custom-resource secrets.
-- Treat Pod specs, ConfigMaps, audit usernames, source IPs, labels, and annotations as sensitive even when Kubernetes Secret values are redacted.
-- Configure NetworkPolicies for the API server/audit adapter, Prometheus, DNS, and the chosen embedding endpoint only.
-- If embeddings leave the cluster, redact or tokenize data first and document the processor and retention policy.
-- Treat local-model inputs like data sent to any other processor. Tool results can include ConfigMaps, annotations, event notes, audit identities, and resource names even though Secret values are redacted.
-- Treat Kubernetes fields as attacker-controlled prompt input. The input guardrails redact common credential forms, quarantine instruction-like text, cap payload size, and guard every Qwen tool result. These filters and model instructions are not a security boundary.
-- Laya output is schema-validated. Qwen output is bounded, redacted, checked for evidence-quality signals, and stripped of direct mutation commands. A human must still review every claim and proposed action.
-- The agent caller fixes cluster and namespace scope. Those fields are not shown in model tool schemas, model-supplied overrides are discarded, and out-of-scope resource keys are rejected.
-- The local demo keeps Laya on a `ClusterIP`, uses Docker Model Runner's internal endpoint, and binds Grafana and MLflow port-forwards to `127.0.0.1`. Do not enable LAN-facing Model Runner TCP access.
-- SQLite benchmark rows, Prometheus, and MLflow contain bounded numeric timings and labels only. They intentionally exclude credentials, endpoint URLs, evidence, prompts, generated answers, and remediation content.
-- The runbook path executes read-only diagnostics only. The Qwen harness exposes no mutation tools. Both routes set `remediationExecuted: false` and require explicit human approval outside Kravel.
-- Use HTTPS and authentication if any model or telemetry endpoint is moved off the local Docker/Kubernetes network.
-- Rotate `KRAVEL_API_TOKEN`; do not put it directly in a checked-in manifest.
-- Define deletion, retention, and legal-hold behavior before collecting regulated workloads.
+- A read-only agent can still see non-secret workload fields, ConfigMap data, logs, and Events. Do not put credentials in those locations.
+- Kubernetes RBAC is the ultimate control boundary. Review `deploy/local.yaml` before adapting Kravel to a real cluster.
+- The bundled repair catalog is for the disposable `kravel-demo` namespace. Do not widen its namespace, resource names, or verbs without a separate security review.
+- Local Slack is a demo of the approval workflow, not a replacement for enterprise identity, retention, or separation-of-duties controls.
+- Anonymous Grafana access is convenient for localhost only. Do not expose this manifest directly outside the laptop.
+- MLflow and audit outputs avoid raw prompts and evidence by design, but operational metadata can still be sensitive.
 
-This MVP sanitizes known Kubernetes Secret fields; it is not a general data-loss-prevention system. Custom resources and ordinary ConfigMaps can still carry secrets.
+## Real Slack scopes
+
+Use a dedicated bot with only `chat:write` and `reactions:read`, invite it only to the approval channel, and rotate the token after a public demonstration. Never commit `.env` files, Kubernetes Secret output, the Local Slack URL, or `.kravel-local-state.env`.
+
+## Production hardening before reuse
+
+Add authenticated TLS ingress, network policy, encrypted persistent storage, centralized append-only audit export, signed image provenance, admission policy, per-user approval identity, and a reviewed fix catalog. Replace localhost anonymous dashboards with authenticated deployments.

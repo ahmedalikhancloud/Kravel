@@ -5,7 +5,6 @@ import time
 import unicodedata
 
 
-INCIDENT_DIAGNOSES = ["config_regression", "service_selector_drift", "bad_image_rollout", "scheduling_constraint"]
 SECRET_PATTERNS = [
     ("private_key", re.compile(r"-----BEGIN [^-\r\n]{0,40}PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]{0,40}PRIVATE KEY-----", re.I)),
     ("bearer_token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}", re.I)),
@@ -59,39 +58,18 @@ def guard_model_input(value, target: str, max_characters: int = 20_000):
     return {"value": text, "decision": "allow_with_redactions" if findings else "allow", "findings": findings, "latencyMs": _ms(started)}
 
 
-def guard_laya_output(result: dict):
-    started = time.perf_counter()
-    diagnosis = {}
-    for name in INCIDENT_DIAGNOSES:
-        try:
-            probability = float(result.get("diagnosis", {}).get(name))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"Laya output guardrail rejected invalid probability for {name}") from exc
-        if not 0 <= probability <= 1:
-            raise ValueError(f"Laya output guardrail rejected invalid probability for {name}")
-        diagnosis[name] = probability
-    confidence = result.get("confidence")
-    if confidence is not None:
-        confidence = float(confidence)
-        if not 0 <= confidence <= 1:
-            raise ValueError("Laya output guardrail rejected invalid confidence")
-    return {"value": {**result, "diagnosis": diagnosis, "confidence": confidence}, "decision": "allow", "findings": [], "latencyMs": _ms(started)}
-
-
-def guard_qwen_output(value, max_characters: int = 12_000):
+def guard_debugger_output(value, max_characters: int = 12_000):
     started = time.perf_counter()
     text, findings = _redact(_normalize(value))
     pattern = re.compile(r"^.*\bkubectl\s+(?:delete|apply|patch|replace|scale|set|edit|create|rollout)\b.*$", re.I | re.M)
     text, count = pattern.subn("[mutation command withheld; remediation requires human approval]", text)
     if count:
         findings.append({"code": "mutation_command_withheld", "count": count})
-    if not re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", text):
-        findings.append({"code": "missing_absolute_timestamp", "count": 1})
     if not re.search(r"uncertainty|unknown|missing evidence", text, re.I):
         findings.append({"code": "missing_uncertainty_statement", "count": 1})
     if len(text) > max_characters:
         text = text[: max(0, max_characters - 80)] + "\n[truncated by Qwen output guardrail]"
         findings.append({"code": "output_truncated", "count": 1})
     if not text.strip():
-        raise ValueError("Qwen output guardrail rejected empty output")
+        raise ValueError("Debugger output guardrail rejected empty output")
     return {"value": text, "decision": "allow_with_warnings" if findings else "allow", "findings": findings, "latencyMs": _ms(started)}

@@ -60,7 +60,7 @@ class MlflowTracer:
                 mlflow.set_tracking_uri(self.url)
                 mlflow.set_experiment(self.experiment)
                 self._mlflow = mlflow
-            except Exception as exc:  # tracing must never break the incident path
+            except Exception as exc:  # tracing must never break the debugger path
                 self.enabled = False
                 self.error = str(exc)
         self.setup_ms = (time.perf_counter() - started) * 1000
@@ -113,7 +113,3 @@ class MlflowTracer:
         except Exception as exc:
             self.error = str(exc)
         return (time.perf_counter() - started) * 1000
-
-
-def safe_pipeline_inputs(pipeline_id: str, scenario: str, namespace: str, baseline_at: str, incident_at: str) -> dict:
-    return {"pipeline_id": pipeline_id, "scenario": scenario, "namespace": namespace, "baseline_at": baseline_at, "incident_at": incident_at}

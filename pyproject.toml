@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kravel"
-version = "0.2.0"
-description = "Time-travel memory and a guarded LangGraph incident agent for Kubernetes"
+version = "0.3.0"
+description = "Read-only LangGraph Kubernetes debugger with human-approved remediation"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 dependencies = [

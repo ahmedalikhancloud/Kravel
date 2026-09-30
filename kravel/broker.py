@@ -1,0 +1,214 @@
+from __future__ import annotations
+
+import hmac
+import json
+import threading
+import time
+from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse
+
+from .fixes import get_fix, summarize_result
+from .metrics import prometheus_metrics
+from .slack import SlackApprovalClient
+from .utils import to_iso
+
+
+WEB_ROOT = Path(__file__).resolve().parent / "web"
+ASSETS = {
+    "/": ("slack.html", "text/html; charset=utf-8"),
+    "/index.html": ("slack.html", "text/html; charset=utf-8"),
+    "/ui/slack.css": ("slack.css", "text/css; charset=utf-8"),
+    "/ui/slack.js": ("slack.js", "text/javascript; charset=utf-8"),
+    "/ui/karl-debugger.png": ("karl-debugger.png", "image/png"),
+    "/ui/cursor-default.svg": ("cursor-default.svg", "image/svg+xml"),
+    "/ui/cursor-pointer.svg": ("cursor-pointer.svg", "image/svg+xml"),
+}
+
+
+class ApprovalBroker:
+    def __init__(self, kube, store, config):
+        self.kube, self.store, self.config = kube, store, config
+        self.slack = SlackApprovalClient(config.slack_bot_token, config.slack_channel_id)
+        self.threads: dict[str, threading.Thread] = {}
+
+    def _dry_run(self, fix: dict) -> list[dict]:
+        return [summarize_result(operation, self.kube.patch(operation["kind"], operation["name"], fix["namespace"], operation["patch"], content_type=operation["contentType"], dry_run=True)) for operation in fix["operations"]]
+
+    def create(self, fix_id: str, namespace: str, actor: str = "kravel-debugger") -> dict:
+        for existing in self.store.proposals(100):
+            if existing["fix_id"] == fix_id and existing["namespace"] == namespace and existing["status"] in {"pending", "approved"}:
+                return existing
+        fix = get_fix(fix_id, namespace)
+        dry_started = time.perf_counter()
+        dry_run = self._dry_run(fix)
+        dry_ms = (time.perf_counter() - dry_started) * 1000
+        proposal = self.store.create_proposal(
+            fix_id=fix_id,
+            namespace=namespace,
+            resource=fix["resource"],
+            command=fix["command"],
+            dry_run=dry_run,
+            expires_at=to_iso(datetime.now(timezone.utc) + timedelta(seconds=self.config.approval_timeout_seconds)),
+        )
+        self.store.record("approval-broker", "proposal.created", actor=actor, resource=fix["resource"], outcome="pending", duration_ms=dry_ms, details={"proposalId": proposal["id"], "fixId": fix_id, "dryRun": "passed", "timeoutSeconds": self.config.approval_timeout_seconds})
+        if self.slack.enabled:
+            try:
+                message = self.slack.post(proposal)
+                proposal = self.store.update_proposal(proposal["id"], slack_channel=message["channel"], slack_ts=message["ts"])
+                self.store.record("approval-broker", "slack.posted", actor="broker", resource=fix["resource"], details={"proposalId": proposal["id"], "channel": message["channel"]})
+            except Exception as exc:
+                self.store.record("approval-broker", "slack.failed", actor="broker", resource=fix["resource"], outcome="error", details={"proposalId": proposal["id"], "errorType": type(exc).__name__})
+        thread = threading.Thread(target=self._wait, args=(proposal["id"],), daemon=True, name=f"approval-{proposal['id'][:8]}")
+        self.threads[proposal["id"]] = thread
+        thread.start()
+        return proposal
+
+    def _wait(self, proposal_id: str):
+        last_slack_poll = 0.0
+        while True:
+            proposal = self.store.proposal(proposal_id)
+            if not proposal:
+                return
+            if proposal["status"] == "approved":
+                return self._execute(proposal)
+            if proposal["status"] in {"rejected", "expired", "executed", "failed"}:
+                return
+            expires = datetime.fromisoformat(proposal["expires_at"].replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) >= expires:
+                self.store.update_proposal(proposal_id, status="expired")
+                self.store.record("approval-broker", "proposal.expired", actor="broker", resource=proposal["resource"], outcome="timeout", details={"proposalId": proposal_id})
+                return
+            if self.slack.enabled and proposal.get("slack_ts") and time.monotonic() - last_slack_poll >= 3:
+                last_slack_poll = time.monotonic()
+                try:
+                    decision = self.slack.decision(proposal["slack_channel"], proposal["slack_ts"])
+                    if decision:
+                        status, actor = decision
+                        self.store.update_proposal(proposal_id, status=status, approved_at=to_iso() if status == "approved" else "", approval_actor=f"slack:{actor}")
+                        self.store.record("approval-broker", f"proposal.{status}", actor=f"slack:{actor}", resource=proposal["resource"], outcome=status, details={"proposalId": proposal_id})
+                except Exception as exc:
+                    self.store.record("approval-broker", "slack.poll_failed", actor="broker", resource=proposal["resource"], outcome="error", details={"proposalId": proposal_id, "errorType": type(exc).__name__})
+            time.sleep(1)
+
+    def approve(self, proposal_id: str, actor: str) -> dict:
+        proposal = self.store.proposal(proposal_id)
+        if not proposal:
+            raise ValueError("Proposal not found")
+        if proposal["status"] != "pending":
+            return proposal
+        expires = datetime.fromisoformat(proposal["expires_at"].replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) >= expires:
+            return self.store.update_proposal(proposal_id, status="expired")
+        proposal = self.store.update_proposal(proposal_id, status="approved", approved_at=to_iso(), approval_actor=actor)
+        self.store.record("approval-broker", "proposal.approved", actor=actor, resource=proposal["resource"], outcome="approved", details={"proposalId": proposal_id})
+        return proposal
+
+    def reject(self, proposal_id: str, actor: str) -> dict:
+        proposal = self.store.proposal(proposal_id)
+        if not proposal:
+            raise ValueError("Proposal not found")
+        if proposal["status"] == "pending":
+            proposal = self.store.update_proposal(proposal_id, status="rejected", approval_actor=actor)
+            self.store.record("approval-broker", "proposal.rejected", actor=actor, resource=proposal["resource"], outcome="rejected", details={"proposalId": proposal_id})
+        return proposal
+
+    def _execute(self, proposal: dict):
+        fix = get_fix(proposal["fix_id"], proposal["namespace"])
+        started = time.perf_counter()
+        try:
+            results = [summarize_result(operation, self.kube.patch(operation["kind"], operation["name"], fix["namespace"], operation["patch"], content_type=operation["contentType"], dry_run=False)) for operation in fix["operations"]]
+            elapsed = (time.perf_counter() - started) * 1000
+            updated = self.store.update_proposal(proposal["id"], status="executed", executed_at=to_iso(), result={"operations": results})
+            self.store.record("approval-broker", "fix.executed", actor=proposal["approval_actor"], resource=proposal["resource"], outcome="success", duration_ms=elapsed, details={"proposalId": proposal["id"], "fixId": proposal["fix_id"]})
+            if self.slack.enabled and proposal.get("slack_ts"):
+                try:
+                    self.slack.update(proposal["slack_channel"], proposal["slack_ts"], f"✅ Kravel executed approved fix {proposal['fix_id']} for {proposal['resource']}. Audit ID: {proposal['id'][:8]}")
+                except Exception:
+                    pass
+            return updated
+        except Exception as exc:
+            elapsed = (time.perf_counter() - started) * 1000
+            self.store.update_proposal(proposal["id"], status="failed", executed_at=to_iso(), result={"error": str(exc)})
+            self.store.record("approval-broker", "fix.failed", actor=proposal["approval_actor"], resource=proposal["resource"], outcome="error", duration_ms=elapsed, details={"proposalId": proposal["id"], "fixId": proposal["fix_id"], "errorType": type(exc).__name__})
+
+
+def create_broker_server(broker: ApprovalBroker, config):
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "KravelApprovalBroker/0.3.0"
+
+        def log_message(self, _format, *_args):
+            return
+
+        def json(self, status: int, payload):
+            body = json.dumps(payload, ensure_ascii=False, indent=2).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def body(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > config.max_body_bytes:
+                raise ValueError("request body is too large")
+            return json.loads(self.rfile.read(length) or b"{}")
+
+        def send_asset(self, path):
+            filename, content_type = ASSETS[path]
+            body = (WEB_ROOT / filename).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def local_authorized(self):
+            supplied = self.headers.get("X-Kravel-Approval-Token", "")
+            return bool(config.approval_token) and hmac.compare_digest(supplied, config.approval_token)
+
+        def do_GET(self):
+            path = urlparse(self.path).path
+            try:
+                if path in ASSETS:
+                    return self.send_asset(path)
+                if path in {"/healthz", "/readyz"}:
+                    return self.json(200, {"status": "ready", "mode": "slack+local" if broker.slack.enabled else "local", "store": broker.store.stats()})
+                if path == "/metrics":
+                    body = prometheus_metrics(broker.store, "approval-broker").encode()
+                    self.send_response(200); self.send_header("Content-Type", "text/plain; version=0.0.4"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
+                if path == "/v1/proposals":
+                    return self.json(200, {"proposals": broker.store.proposals(100), "timeoutSeconds": config.approval_timeout_seconds, "slackEnabled": broker.slack.enabled})
+                if path.startswith("/v1/proposals/"):
+                    proposal = broker.store.proposal(path.split("/")[3])
+                    return self.json(200 if proposal else 404, proposal or {"error": "not_found"})
+                if path == "/v1/audit":
+                    return self.json(200, {"entries": broker.store.audit_entries(300)})
+                return self.json(404, {"error": "not_found"})
+            except Exception as exc:
+                return self.json(400, {"error": str(exc)})
+
+        def do_POST(self):
+            path = urlparse(self.path).path
+            try:
+                body = self.body()
+                if path == "/v1/proposals":
+                    return self.json(201, broker.create(str(body.get("fixId", "")), str(body.get("namespace") or config.default_namespace), str(body.get("actor") or "kravel-debugger")))
+                if path.startswith("/v1/proposals/") and path.endswith(("/approve", "/reject")):
+                    if not self.local_authorized():
+                        return self.json(401, {"error": "approval_token_required"})
+                    proposal_id, action = path.split("/")[3:5]
+                    actor = str(body.get("actor") or "local-human")[:80]
+                    proposal = broker.approve(proposal_id, actor) if action == "approve" else broker.reject(proposal_id, actor)
+                    return self.json(200, proposal)
+                return self.json(404, {"error": "not_found"})
+            except Exception as exc:
+                return self.json(400, {"error": str(exc)})
+
+    return ThreadingHTTPServer((config.host, config.port), Handler)
