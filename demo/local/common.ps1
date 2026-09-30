@@ -29,6 +29,41 @@ function Assert-KravelPrerequisites {
   Invoke-KravelNative "kubectl" @("wait", "--for=condition=Ready", "node", "--all", "--timeout=180s")
 }
 
+function Select-KravelDesktopModelRunner {
+  $contextName = "kravel-desktop"
+  $endpoint = "http://127.0.0.1:12434"
+  $desktopEndpointAvailable = $false
+  try {
+    $response = Invoke-WebRequest -UseBasicParsing -Uri "$endpoint/engines/v1/models" -TimeoutSec 5
+    $desktopEndpointAvailable = $response.StatusCode -eq 200
+  } catch {
+    $desktopEndpointAvailable = $false
+  }
+
+  if ($desktopEndpointAvailable) {
+    $inspection = & docker model context inspect $contextName 2>$null
+    if ($LASTEXITCODE -ne 0) {
+      Invoke-KravelNative "docker" @(
+        "model", "context", "create", $contextName,
+        "--host", $endpoint,
+        "--description", "Kravel localhost-only Docker Desktop Model Runner"
+      )
+    } else {
+      $context = ($inspection -join [Environment]::NewLine) | ConvertFrom-Json
+      if ($context[0].host -ne $endpoint) {
+        throw "Docker model context '$contextName' already exists with a different host. Inspect it with: docker model context inspect $contextName"
+      }
+    }
+    Invoke-KravelNative "docker" @("model", "context", "use", $contextName)
+  }
+
+  try {
+    Invoke-KravelNative "docker" @("model", "status")
+  } catch {
+    throw "Docker Model Runner is not reachable. In Docker Desktop, enable Model Runner, GPU-backed inference, and localhost TCP support on port 12434, then retry. $($_.Exception.Message)"
+  }
+}
+
 function Wait-KravelCondition {
   param(
     [Parameter(Mandatory = $true)][string]$Description,

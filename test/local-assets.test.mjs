@@ -46,5 +46,7 @@ test("local scripts bind browser ports to loopback and contain no committed cred
     .join("\n");
   assert.match(scripts, /--address=127\.0\.0\.1/);
   assert.match(scripts, /docker-desktop/);
+  assert.match(scripts, /model context.*kravel-desktop|contextName = "kravel-desktop"/s);
+  assert.match(scripts, /http:\/\/127\.0\.0\.1:12434/);
   assert.doesNotMatch(scripts, /gsk_[A-Za-z0-9_-]{16,}|BEGIN PRIVATE KEY/i);
 });

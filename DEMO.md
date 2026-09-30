@@ -50,7 +50,7 @@ Install the latest [Docker Desktop for Windows](https://docs.docker.com/desktop/
 4. Open **Kubernetes** and create a one-node cluster using the `kubeadm` provisioner. The local manifests use `imagePullPolicy: Never`, and this provisioner is the least surprising path for locally built images.
 5. Open **Settings → AI** and enable Docker Model Runner.
 6. Enable GPU-backed inference.
-7. Leave host-side Model Runner TCP access disabled; Kubernetes reaches it through Docker's internal network.
+7. Enable host-side TCP support on its default port, `12434`. Docker Desktop binds this endpoint to localhost; do not expose it through a LAN proxy or firewall rule. Kubernetes still reaches the runner through Docker's internal network.
 
 Verify the cluster:
 
@@ -188,6 +188,24 @@ The Qwen model and Docker images remain cached. Remove those separately through 
 ### `docker model` is not recognized
 
 Update Docker Desktop and enable Docker Model Runner under **Settings → AI**.
+
+### `docker model status` says port 12434 is already in use
+
+Docker Desktop's runner may already be healthy while the model CLI incorrectly auto-detects the standalone Docker Engine runner. Confirm the Desktop endpoint first:
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:12434/engines/v1/models
+```
+
+If it returns HTTP 200, select it explicitly:
+
+```powershell
+docker model context create kravel-desktop --host http://127.0.0.1:12434 --description "Kravel localhost-only Docker Desktop Model Runner"
+docker model context use kravel-desktop
+docker model status
+```
+
+If `kravel-desktop` already exists, skip the `create` command. `prepare.ps1` now performs this detection and setup automatically. Do not disable Docker Desktop Model Runner; Kravel uses that instance.
 
 ### GPU-backed inference is unavailable
 

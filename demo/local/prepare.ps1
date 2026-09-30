@@ -7,7 +7,7 @@ $qwenModel = "ai/qwen3:4b-thinking-2507-q4_K_M"
 Assert-KravelPrerequisites
 
 Write-Host "`n==> Verifying Docker Model Runner"
-Invoke-KravelNative "docker" @("model", "status")
+Select-KravelDesktopModelRunner
 
 Write-Host "`n==> Downloading and configuring the local Qwen reasoning model"
 Invoke-KravelNative "docker" @("model", "pull", $qwenModel)
