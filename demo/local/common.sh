@@ -62,14 +62,14 @@ read_state() {
 stop_port_forwards() {
   local key pid
   if [[ -f "$KRAVEL_STATE" ]]; then
-    for key in GRAFANA_PID MLFLOW_PID; do
+    for key in KRAVEL_UI_PID GRAFANA_PID MLFLOW_PID; do
       pid="$(sed -n "s/^${key}=//p" "$KRAVEL_STATE" | tail -n 1)"
       if [[ "$pid" =~ ^[0-9]+$ ]]; then kill "$pid" 2>/dev/null || true; fi
     done
   fi
   # Clean up port forwards created by releases that used a PowerShell JSON state file.
   if [[ -f "$KRAVEL_LEGACY_STATE" ]]; then
-    for key in grafanaPid mlflowPid; do
+    for key in kravelUiPid grafanaPid mlflowPid; do
       pid="$(sed -n "s/.*\"${key}\"[^0-9]*\([0-9][0-9]*\).*/\1/p" "$KRAVEL_LEGACY_STATE" | tail -n 1)"
       if [[ "$pid" =~ ^[0-9]+$ ]]; then kill "$pid" 2>/dev/null || true; fi
     done

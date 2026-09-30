@@ -49,16 +49,26 @@ def run_incident_pipeline(store, config, tracer, baseline_at, incident_at, names
         return {"evidence": evidence, "stage_metrics": {**state["stage_metrics"], "evidence_reconstruction": _elapsed(started)}}
 
     def laya_input_guardrail(state):
-        with tracer.span("langgraph.laya_input_guardrail", "GUARDRAIL", {"input_characters": len(state["evidence"]["state"])}) as span:
-            guarded = guard_model_input(state["evidence"]["state"], "laya", 1600)
+        classifier_input = state["evidence"].get("layaState") or state["evidence"]["state"]
+        with tracer.span("langgraph.laya_input_guardrail", "GUARDRAIL", {"input_characters": len(classifier_input), "incident_shards": len(state["evidence"].get("shards", []))}) as span:
+            guarded = guard_model_input(classifier_input, "laya", 1600)
             span.set_outputs({"decision": guarded["decision"], "finding_count": len(guarded["findings"])})
         return {"laya_input": guarded, "stage_metrics": {**state["stage_metrics"], "laya_input_guardrail": guarded["latencyMs"]}, "guardrails": {**state["guardrails"], "layaInput": {"decision": guarded["decision"], "findings": guarded["findings"]}}}
 
     def classify_laya(state):
         started = time.perf_counter()
-        with tracer.span("langgraph.laya_classifier", "LLM", {"model": config.laya_model, "evidence_characters": len(state["laya_input"]["value"])}) as span:
-            raw = run_laya_classifier(config.laya_url, config.laya_api_key, config.laya_model, state["laya_input"]["value"])
-            span.set_outputs({"latency_ms": raw["modelMs"], "classes": len(raw["diagnosis"])})
+        questions = state["evidence"].get("layaQuestions", {})
+        deterministic = state["evidence"].get("deterministicDiagnosis", {})
+        with tracer.span("langgraph.laya_classifier", "LLM", {"model": config.laya_model, "evidence_characters": len(state["laya_input"]["value"]), "hypotheses": len(questions), "deterministic_signals": len(deterministic)}) as span:
+            if questions:
+                raw = run_laya_classifier(config.laya_url, config.laya_api_key, config.laya_model, state["laya_input"]["value"], questions)
+            else:
+                raw = {"model": config.laya_model, "modelMs": 0.0, "confidence": 1.0 if deterministic else 0.0, "diagnosis": {}}
+            diagnosis = {name: 0.0 for name in ("config_regression", "service_selector_drift", "bad_image_rollout", "scheduling_constraint")}
+            diagnosis.update(raw["diagnosis"])
+            diagnosis.update(deterministic)
+            raw = {**raw, "model": f"{raw['model']}+kubernetes-signals", "diagnosis": diagnosis, "deterministicSignals": deterministic, "shards": state["evidence"].get("shards", [])}
+            span.set_outputs({"latency_ms": raw["modelMs"], "laya_hypotheses": len(questions), "deterministic_classes": len(deterministic)})
         return {"laya": raw, "stage_metrics": {**state["stage_metrics"], "laya_inference": _elapsed(started)}}
 
     def laya_output_guardrail(state):
@@ -120,4 +130,4 @@ def run_incident_pipeline(store, config, tracer, baseline_at, incident_at, names
     state = builder.compile().invoke(initial)
     qwen = state.get("qwen")
     qwen_output = state.get("qwen_output")
-    return {"scenario": scenario, "status": "success", "route": state["policy"]["route"], "decision": state["policy"]["topDiagnosis"], "reviewStatus": state["proposal"]["status"], "stageMetrics": state["stage_metrics"], "guardrails": state["guardrails"], "evidence": {"changeCount": state["evidence"]["changeCount"], "eventCount": state["evidence"]["eventCount"]}, "laya": state["laya"], "policy": state["policy"], "predefinedAutomation": state.get("predefined_automation"), "qwen": {"model": qwen["model"], "turns": qwen["turns"], "toolCalls": qwen["toolCalls"], "inputGuardrail": qwen["inputGuardrail"], "report": qwen_output["value"]} if qwen else None, "proposal": state["proposal"]}
+    return {"scenario": scenario, "status": "success", "route": state["policy"]["route"], "decision": state["policy"]["topDiagnosis"], "reviewStatus": state["proposal"]["status"], "stageMetrics": state["stage_metrics"], "guardrails": state["guardrails"], "evidence": {"changeCount": state["evidence"]["changeCount"], "eventCount": state["evidence"]["eventCount"], "shards": state["evidence"].get("shards", [])}, "laya": state["laya"], "policy": state["policy"], "predefinedAutomation": state.get("predefined_automation"), "qwen": {"model": qwen["model"], "turns": qwen["turns"], "toolCalls": qwen["toolCalls"], "inputGuardrail": qwen["inputGuardrail"], "report": qwen_output["value"]} if qwen else None, "proposal": state["proposal"]}

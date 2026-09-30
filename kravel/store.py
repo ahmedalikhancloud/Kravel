@@ -265,6 +265,46 @@ class TemporalStore:
             "caveats": ["State is only reconstructable after this collector first observed an object.", "Event order uses source timestamps when present and collector receipt time otherwise.", "Relevance ranks evidence; it does not assert causality."],
         }
 
+    def timeline(self, *, cluster_id, namespace="", limit=500):
+        bounded = min(max(int(limit), 1), 2000)
+        namespace_filter = " AND namespace=?" if namespace else ""
+        params = [cluster_id] + ([namespace] if namespace else []) + [bounded]
+        with self.lock:
+            changes = self.db.execute(
+                f"SELECT event_at,action,resource_key,kind,namespace,name,summary,patch_json FROM changes WHERE cluster_id=?{namespace_filter} ORDER BY event_at DESC,id DESC LIMIT ?",
+                params,
+            ).fetchall()
+            events = self.db.execute(
+                f"SELECT event_at,type,reason,namespace,regarding_kind,regarding_name,note,count FROM k8s_events WHERE cluster_id=?{namespace_filter} ORDER BY event_at DESC,id DESC LIMIT ?",
+                params,
+            ).fetchall()
+        entries = [
+            {
+                "at": row["event_at"], "entryType": "change", "severity": "change", "action": row["action"],
+                "resourceKey": row["resource_key"], "kind": row["kind"], "namespace": row["namespace"],
+                "name": row["name"], "title": row["summary"], "patch": _loads(row["patch_json"], []),
+            }
+            for row in changes
+        ]
+        entries.extend(
+            {
+                "at": row["event_at"], "entryType": "event", "severity": "warning" if row["type"] == "Warning" else "normal",
+                "action": row["reason"], "resourceKey": f"event|{row['regarding_kind']}|{row['namespace'] or '_cluster'}|{row['regarding_name']}",
+                "kind": row["regarding_kind"], "namespace": row["namespace"], "name": row["regarding_name"],
+                "title": f"{row['reason']} · {row['regarding_kind']}/{row['regarding_name']}", "note": row["note"], "count": row["count"],
+            }
+            for row in events
+        )
+        entries.sort(key=lambda item: item["at"])
+        return {
+            "clusterId": cluster_id,
+            "namespace": namespace,
+            "start": entries[0]["at"] if entries else None,
+            "end": entries[-1]["at"] if entries else None,
+            "entryCount": len(entries),
+            "entries": entries[-bounded:],
+        }
+
     def record_benchmark_run(self, **values):
         diagnosis = {k: min(max(float(v), 0), 1) for k, v in values.get("diagnosis", {}).items() if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", k)}
         stages = {k: float(v) for k, v in values.get("stage_metrics", {}).items() if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", k) and float(v) >= 0}

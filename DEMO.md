@@ -49,6 +49,8 @@ The scenario creates four common production failures:
 
 The terminal first prints the deterministic time-travel diff and ordered timeline. It then runs the guarded LangGraph pipeline and prints Laya probabilities, the policy route, every stage latency, Qwen's evidence-grounded report when escalated, and the human-review proposal.
 
+It also records the exact baseline and incident timestamps in the disposable demo namespace so the visual cockpit opens directly on the captured failure window.
+
 For a smaller incident:
 
 ```bash
@@ -57,12 +59,17 @@ bash demo/local/demo.sh --scenario routine
 
 If Laya clears the confidence and margin thresholds, this uses the predefined read-only runbook. Low confidence still escalates safely.
 
-## Dashboards
+## Visual cockpit and dashboards
 
 The demo creates localhost-only port forwards:
 
+- Kravel cockpit: [http://localhost:8080](http://localhost:8080)
 - Grafana: [http://localhost:3000](http://localhost:3000)
 - MLflow: [http://localhost:5000](http://localhost:5000)
+
+Start with the Kravel cockpit. The center canvas reconstructs the Kubernetes topology at the selected timestamp. Broken resources are red, objects changed from the chosen baseline are amber, and relationship lines show ownership, selectors, ConfigMap reads, service accounts, and storage. Click a resource to inspect its historical YAML, relations, and changed paths.
+
+Drag the bottom timeline to rewind the cluster or use **Replay** to move through the captured sequence. Karl stays synchronized with the selected timestamp and resource. He can summarize deterministic evidence immediately, explain a resource, show warning Events, or ask permission before starting the guarded Laya → policy → Qwen investigation.
 
 In MLflow, choose the **Kravel Local Incident Traces** experiment and open **Traces**. A pipeline execution is one trace; expanding it shows the parent/child waterfall for reconstruction, input/output guardrails, Laya, routing, temporal tools, Qwen, and human review.
 
@@ -100,14 +107,14 @@ They locate Git Bash and invoke the same `.sh` scripts. They do not execute Powe
 
 ## Presentation sequence
 
-1. Show healthy Pods with `kubectl get pods -A`.
-2. Run the escalation demo and narrate each injected mutation.
-3. Point to the deterministic reconstruction before any model output.
-4. Show Laya's quick classification and the policy decision.
-5. Explain that LangGraph fixes the cluster/namespace scope and executes only read-only temporal tools.
-6. Show `awaiting_human_review` and `remediationExecuted: false`.
-7. Open Grafana for stage timings.
-8. Open MLflow **Traces** and expand the span waterfall.
+1. Run the escalation demo and open the Kravel cockpit at `http://localhost:8080`.
+2. Click a red or amber resource and show its reconstructed YAML manifest.
+3. Drag backward across the event markers to show the healthy earlier state, then press **Replay**.
+4. Ask Karl what changed and show his deterministic evidence response.
+5. Choose **Prepare deep investigation**, explain the read-only approval card, and approve it.
+6. Show incident shards: native Kubernetes signals handle mechanically obvious failures while Laya scores ambiguous correlations.
+7. Show `awaiting_human_review` and `remediationExecuted: false`.
+8. Open Grafana for stage timings and MLflow **Traces** for the span waterfall.
 
 ## Cleanup
 
@@ -176,7 +183,7 @@ Run at least one pipeline, wait a few seconds for Prometheus, and refresh:
 bash demo/local/run-pipeline.sh
 ```
 
-### Port 3000 or 5000 is occupied
+### Port 8080, 3000, or 5000 is occupied
 
 Stop the conflicting local service, run `bash demo/local/reset.sh`, and retry. Port forwards bind only to `127.0.0.1`.
 

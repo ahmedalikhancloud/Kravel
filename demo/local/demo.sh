@@ -74,16 +74,24 @@ if [[ "$scenario" == escalation ]]; then
 fi
 
 incident_at="$(timestamp)"
-printf 'SCENARIO=%s\nBASELINE_AT=%s\nINCIDENT_AT=%s\nGRAFANA_PID=\nMLFLOW_PID=\n' "$scenario" "$baseline_at" "$incident_at" > "$KRAVEL_STATE"
+kubectl -n kravel-demo create configmap kravel-demo-window \
+  --from-literal="baselineAt=$baseline_at" \
+  --from-literal="incidentAt=$incident_at" \
+  --from-literal="scenario=$scenario" \
+  --dry-run=client -o yaml | kubectl apply -f -
+wait_resource ConfigMap kravel-demo-window
+printf 'SCENARIO=%s\nBASELINE_AT=%s\nINCIDENT_AT=%s\nKRAVEL_UI_PID=\nGRAFANA_PID=\nMLFLOW_PID=\n' "$scenario" "$baseline_at" "$incident_at" > "$KRAVEL_STATE"
 
 section "Deterministic reconstruction before AI analysis"
 kubectl -n kravel-system exec deployment/kravel -- python -m kravel.cli report --baseline "$baseline_at" --incident "$incident_at" --namespace kravel-demo
 "$KRAVEL_ROOT/demo/local/run-pipeline.sh" --runs "$runs"
 
 section "Binding dashboards to localhost only"
+kravel_ui_pid="$(start_port_forward kravel-system kravel 8080 8080)"
 grafana_pid="$(start_port_forward kravel-observability kravel-grafana 3000 3000)"
 mlflow_pid="$(start_port_forward kravel-observability kravel-mlflow 5000 5000)"
-sed -i "s/^GRAFANA_PID=.*/GRAFANA_PID=$grafana_pid/;s/^MLFLOW_PID=.*/MLFLOW_PID=$mlflow_pid/" "$KRAVEL_STATE"
+sed -i "s/^KRAVEL_UI_PID=.*/KRAVEL_UI_PID=$kravel_ui_pid/;s/^GRAFANA_PID=.*/GRAFANA_PID=$grafana_pid/;s/^MLFLOW_PID=.*/MLFLOW_PID=$mlflow_pid/" "$KRAVEL_STATE"
+wait_until "Kravel cockpit localhost:8080" 30 curl -fsS http://127.0.0.1:8080/readyz
 wait_until "Grafana localhost:3000" 30 curl -fsS http://127.0.0.1:3000/api/health
 wait_until "MLflow localhost:5000" 30 curl -fsS http://127.0.0.1:5000/health
-printf '\nDemo ready.\nGrafana: http://localhost:3000\nMLflow traces: http://localhost:5000\nCleanup: bash demo/local/reset.sh\n'
+printf '\nDemo ready.\nKravel cockpit: http://localhost:8080\nGrafana: http://localhost:3000\nMLflow traces: http://localhost:5000\nCleanup: bash demo/local/reset.sh\n'

@@ -28,17 +28,18 @@ incident timestamp
              ├─ Kubernetes Events
              └─ metrics
                          │
-                         └─ context shard with explicit caveats
+                         └─ incident shards with explicit caveats
                                       │
-                                      ├─ guarded Laya classification
+                                      ├─ deterministic Kubernetes signals
+                                      ├─ guarded Laya classification of ambiguous shards
                                       └─ policy-gated, guarded Qwen tool loop
 ```
 
-The context shard is an evidence package. It intentionally does not label a change as the root cause. That conclusion belongs to a rule engine, a model, or a human and should include confidence and counter-evidence.
+Each incident shard is a small, independently explainable evidence package. It intentionally distinguishes a deterministic Kubernetes diagnosis from a temporal hypothesis: an image-pull warning paired with an image change can be classified without a model, while a nearby ConfigMap edit remains a hypothesis until stronger causal evidence exists.
 
 ## Guarded incident pipeline
 
-Kravel first gives a compact, guarded evidence shard to the local Laya classifier. A deterministic policy gate uses class probabilities, confidence, the top-versus-runner-up margin, and a severe-class allow-list. Routine, high-confidence incidents execute a bounded read-only runbook that repeats the temporal diff and correlates matching Events. Ambiguous or severe incidents escalate to the local Qwen reasoning model.
+Kravel first partitions evidence into focused incident shards. Native Kubernetes signals handle mechanically provable cases such as image-pull failures, selector drift, and failed scheduling. Only ambiguous shards are sent through input guardrails to the local Laya zero-shot classifier. A deterministic policy gate uses the combined class probabilities, confidence, top-versus-runner-up margin, and a severe-class allow-list. Routine, high-confidence incidents execute a bounded read-only runbook that repeats the temporal diff and correlates matching Events. Ambiguous or severe incidents escalate to the local Qwen reasoning model.
 
 The Kubernetes watcher inherits `apiVersion` and `kind` from each enclosing list response when individual list items omit TypeMeta, as Kubernetes API servers are permitted to do. The demo waits until Kravel can reconstruct each annotated mutation before closing the incident window, so model latency cannot race collector ingestion.
 
@@ -49,6 +50,14 @@ MLflow receives a real trace rather than a collection of nominal tracking runs. 
 Laya and Qwen each have separately timed input and output guardrails. Stage timing is written to SQLite, exported to Prometheus, and logged to MLflow without storing evidence, prompts, or generated reports. Every route produces a proposal with `remediationExecuted: false` and `awaiting_human_review`; the routine proposal separately records `diagnosticAutomationExecuted: true`.
 
 The harness is intentionally read-only. It does not expose `kubectl`, a shell, admission controls, or remediation functions. Kubernetes fields returned by tools are treated as untrusted evidence because annotations and event messages can contain prompt-injection text.
+
+## Temporal cockpit and Karl
+
+The local web cockpit is served by the same authenticated Kravel API process. It uses explicit, packaged static assets and makes no third-party browser requests. The topology view is derived from a reconstructed `stateAt(t)` result, not from the live Kubernetes API, so moving the clock changes every resource card and relationship consistently. Selecting a resource opens its reconstructed manifest, inferred relations, and changes from the selected baseline.
+
+Karl is a presentation and investigation layer over the same temporal APIs. Greetings, warning summaries, resource explanations, and rewind operations are deterministic and grounded in stored evidence. A free-form root-cause request becomes an approval card; only explicit approval starts the guarded Laya-to-policy-to-Qwen pipeline. That pipeline remains read-only and produces a proposal for human review. Approval authorizes model investigation, never cluster remediation.
+
+The demo writes a small `kravel-demo-window` ConfigMap containing only the scenario and its baseline/incident timestamps. The cockpit recognizes that marker and opens directly on the captured incident window. No model credentials, prompts, or generated reports are exposed in the page source.
 
 ## Watch correctness
 

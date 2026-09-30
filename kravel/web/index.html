@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07101f">
+  <meta name="description" content="Kravel temporal Kubernetes incident cockpit">
+  <title>Kravel · Temporal Cluster Cockpit</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2307101f'/%3E%3Ccircle cx='32' cy='32' r='19' fill='none' stroke='%233ce8d0' stroke-width='5'/%3E%3Cpath d='M32 19v14l10 6M18 13l-6 11 12-2' fill='none' stroke='%23ffbd59' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/ui/app.css?v=1">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand" aria-label="Kravel temporal cockpit">
+        <span class="brand-mark" aria-hidden="true"><i></i></span>
+        <div><strong>KRAVEL</strong><span>temporal cluster cockpit</span></div>
+      </div>
+      <div class="cluster-meta">
+        <span class="eyebrow">CONTEXT</span>
+        <select id="namespaceSelect" aria-label="Kubernetes namespace">
+          <option value="kravel-demo">kravel-demo</option>
+          <option value="">all namespaces</option>
+        </select>
+      </div>
+      <div class="top-actions">
+        <div class="collector-status" id="collectorStatus"><span></span><b>Connecting</b></div>
+        <button class="icon-button" id="refreshButton" aria-label="Refresh cluster" title="Refresh cluster">↻</button>
+        <button class="live-button" id="liveButton"><span></span>LIVE</button>
+      </div>
+    </header>
+
+    <main class="cockpit">
+      <aside class="resource-panel panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">OBJECT INDEX</span><h2>Resources</h2></div>
+          <span class="count-badge" id="resourceCount">0</span>
+        </div>
+        <label class="search-field">
+          <span aria-hidden="true">⌕</span>
+          <input id="resourceSearch" type="search" placeholder="Find a resource" autocomplete="off">
+        </label>
+        <div class="kind-filters" id="kindFilters" aria-label="Resource kind filters"></div>
+        <div class="resource-list" id="resourceList" aria-live="polite"></div>
+      </aside>
+
+      <section class="map-panel panel" aria-label="Cluster topology">
+        <div class="map-toolbar">
+          <div>
+            <span class="eyebrow">RECONSTRUCTED STATE</span>
+            <h1 id="snapshotTitle">Cluster now</h1>
+          </div>
+          <div class="map-stats">
+            <span><b id="healthyCount">0</b> healthy</span>
+            <span class="warn"><b id="warningCount">0</b> warning</span>
+            <span class="bad"><b id="brokenCount">0</b> broken</span>
+          </div>
+        </div>
+        <div class="time-banner" id="timeBanner">
+          <span class="rewind-glyph" aria-hidden="true">◴</span>
+          <div><b>Live state</b><span>Karl is watching the cluster event stream.</span></div>
+          <time id="selectedTime">—</time>
+        </div>
+        <div class="topology-stage" id="topologyStage">
+          <svg id="edgeLayer" aria-hidden="true"></svg>
+          <div class="topology-empty" id="topologyEmpty">
+            <div class="empty-orbit"></div>
+            <b>Waiting for temporal memory</b>
+            <span>Run the demo scenario to populate this view.</span>
+          </div>
+          <div class="topology-grid" id="topologyGrid"></div>
+          <div class="map-legend" aria-label="Status legend">
+            <span><i class="status-dot healthy"></i>Healthy</span>
+            <span><i class="status-dot changed"></i>Changed</span>
+            <span><i class="status-dot broken"></i>Failure evidence</span>
+          </div>
+        </div>
+        <div class="incident-ribbon">
+          <div class="ribbon-heading"><span class="eyebrow">INCIDENT SHARDS</span><b id="shardSummary">No incident window selected</b></div>
+          <div class="shard-list" id="shardList"></div>
+        </div>
+      </section>
+
+      <aside class="karl-panel panel">
+        <div class="karl-header">
+          <div class="karl-portrait"><img src="/ui/karl.png?v=1" alt="Karl, Kravel's pixel-art time-travel assistant"></div>
+          <div><span class="eyebrow">TEMPORAL COPILOT</span><h2>Karl <span class="online-dot" title="Online"></span></h2><p>Evidence first. Mutations locked.</p></div>
+        </div>
+        <div class="chat-log" id="chatLog" aria-live="polite" aria-label="Conversation with Karl"></div>
+        <div class="quick-actions" id="quickActions" aria-label="Suggested actions"></div>
+        <form class="chat-form" id="chatForm">
+          <label for="chatInput" class="sr-only">Message Karl</label>
+          <textarea id="chatInput" rows="2" placeholder="Ask what changed, select a resource, or request an investigation…"></textarea>
+          <button type="submit" aria-label="Send message">Send</button>
+        </form>
+        <p class="safety-note"><span>⌾</span> Karl can inspect and propose. Cluster changes always require a human outside this UI.</p>
+      </aside>
+    </main>
+
+    <section class="timeline-panel panel" aria-label="Time travel controls">
+      <div class="timeline-heading">
+        <div><span class="eyebrow">TEMPORAL MEMORY</span><h2>Cluster timeline</h2></div>
+        <div class="timeline-actions">
+          <button id="baselineButton">Set baseline</button>
+          <button id="playButton" aria-label="Play timeline">▶ Replay</button>
+        </div>
+      </div>
+      <div class="timeline-track-wrap">
+        <div class="timeline-events" id="timelineEvents" aria-hidden="true"></div>
+        <input id="timeSlider" type="range" min="0" max="100" value="100" aria-label="Rewind cluster state">
+        <div class="timeline-labels"><time id="timelineStart">—</time><span id="timelineDelta">NOW</span><time id="timelineEnd">—</time></div>
+      </div>
+      <div class="event-stream" id="eventStream"></div>
+    </section>
+  </div>
+
+  <dialog class="resource-drawer" id="resourceDrawer">
+    <div class="drawer-header">
+      <div><span class="eyebrow" id="drawerKind">RESOURCE</span><h2 id="drawerTitle">Manifest</h2></div>
+      <button class="icon-button" id="closeDrawer" aria-label="Close resource details">×</button>
+    </div>
+    <div class="drawer-tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="manifest">Manifest</button>
+      <button role="tab" aria-selected="false" data-tab="relations">Relations</button>
+      <button role="tab" aria-selected="false" data-tab="changes">Changes</button>
+    </div>
+    <div class="drawer-content" id="drawerContent"></div>
+    <div class="drawer-footer">
+      <button id="askKarlResource">Ask Karl about this</button>
+      <button class="secondary" id="copyManifest">Copy manifest</button>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/ui/app.js?v=1" defer></script>
+</body>
+</html>

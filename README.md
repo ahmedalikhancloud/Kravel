@@ -1,6 +1,6 @@
 # Kravel
 
-Kravel is a read-only Kubernetes incident agent with temporal memory. It continuously records Kubernetes object changes and Events, reconstructs the cluster at earlier timestamps, classifies an incident with Laya, and conditionally escalates to a local Qwen agent built with LangGraph.
+Kravel is a read-only Kubernetes incident agent with temporal memory. It continuously records Kubernetes object changes and Events, reconstructs the cluster at earlier timestamps, classifies incident-specific evidence with Laya and native Kubernetes signals, and conditionally escalates to a local Qwen agent built with LangGraph. Its local temporal cockpit visualizes the reconstructed topology, manifests, changes, warning events, and agent progress through Karl, a pixel-art Kubernetes time-travel copilot.
 
 The supported demo runs entirely on one Windows laptop. Docker Desktop provides Kubernetes and local model inference. It needs no hosted model, API key, Codespace, public endpoint, or KillerCoda session.
 
@@ -41,8 +41,9 @@ Prometheus and Grafana expose the same stage latencies, model timings, route, La
 | Component | Location | Purpose |
 |---|---|---|
 | Docker Desktop Kubernetes | one local node | Runs workloads and services |
-| Kravel (Python 3.12) | `kravel-system` | Watcher, temporal store, API, LangGraph harness |
-| Laya | `kravel-ai`, CPU | Cheap initial classification |
+| Kravel (Python 3.12) | `kravel-system` | Watcher, temporal store, API, cockpit, LangGraph harness |
+| Karl | Kravel cockpit | Grounded navigation, progress, options, and investigation approval |
+| Laya | `kravel-ai`, CPU | Scores only ambiguous incident shards |
 | Qwen3 4B Instruct | Docker Model Runner, GPU | Fast deep investigation and report synthesis |
 | Prometheus + Grafana | `kravel-observability` | Aggregate stage latency |
 | MLflow | `kravel-observability` | Inspect the nested trace waterfall |
@@ -58,8 +59,11 @@ bash demo/local/demo.sh --scenario escalation
 
 Then open:
 
+- Kravel cockpit: `http://localhost:8080`
 - Grafana: `http://localhost:3000`
 - MLflow: `http://localhost:5000`, then select **Traces**
+
+The cockpit opens on the captured incident window. Drag the timeline to reconstruct earlier cluster states, click any resource to inspect its historical YAML manifest and relationships, or ask Karl to explain the evidence. Deep local investigation requires an explicit UI approval; no remediation is executed.
 
 The `.cmd` launchers call the same Bash files, so these are also valid from PowerShell or Command Prompt and do not depend on PowerShell execution policy:
 
@@ -80,6 +84,8 @@ LangGraph and the MCP server expose the same bounded temporal tools:
 - `trace_resource(timestamp, resource_key)`
 
 HTTP equivalents are available under `/v1/state/*` and `/v1/context`; `/metrics`, `/healthz`, and `/readyz` support operations.
+
+The local UI additionally uses `/v1/timeline`, `/v1/incidents`, `/v1/karl/chat`, and the approval-gated `/v1/karl/analyze` endpoint. Obvious image-pull, scheduling, and Service/backend contradictions are derived from deterministic Kubernetes evidence. Laya receives only the remaining ambiguous shards instead of the whole namespace-wide event stream.
 
 ## Key configuration
 

@@ -23,6 +23,9 @@ kravel = "kravel.cli:main"
 [tool.setuptools.packages.find]
 include = ["kravel*"]
 
+[tool.setuptools.package-data]
+kravel = ["web/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q -p no:cacheprovider"
