@@ -79,6 +79,17 @@ def create_server(store, config, kube):
                 raise ValueError("request body is too large")
             return json.loads(self.rfile.read(length) or b"{}")
 
+        def read_tool(self, name, raw_args, namespace):
+            started = time.perf_counter()
+            args, outcome = {}, "error"
+            try:
+                args = enforce_read_scope(name, raw_args, namespace)
+                result = execute_read_tool(name, args, kube)
+                outcome = "success"
+                return {"tool": name, "arguments": args, "result": result, "durationMs": (time.perf_counter() - started) * 1000}
+            finally:
+                store.record("debugger", f"tool.{name}", actor="operator", resource=str(args.get("name") or args.get("pod") or args.get("kind") or ""), outcome=outcome, duration_ms=(time.perf_counter() - started) * 1000, details={"namespace": namespace})
+
         def do_GET(self):
             path = urlparse(self.path).path
             try:
@@ -100,11 +111,11 @@ def create_server(store, config, kube):
                     store.record("debugger", "cluster.inspected", actor="operator", resource=namespace, duration_ms=result["durationMs"], details={"podCount": result["podCount"], "issueCount": len(result["issues"])})
                     return self.send_json(200, result)
                 if path == "/v1/resource":
-                    return self.send_json(200, kube.get_resource(query["kind"], query["name"], namespace))
+                    return self.send_json(200, self.read_tool("get_resource", {"kind": query["kind"], "name": query["name"], "namespace": namespace}, namespace)["result"])
                 if path == "/v1/logs":
-                    return self.send_json(200, kube.pod_logs(query["pod"], namespace, query.get("container", ""), query.get("previous", "false").lower() == "true", int(query.get("tailLines", 120))))
+                    return self.send_json(200, self.read_tool("pod_logs", {"pod": query["pod"], "namespace": namespace, "container": query.get("container", ""), "previous": query.get("previous", "false").lower() == "true", "tail_lines": query.get("tailLines", 120)}, namespace)["result"])
                 if path == "/v1/events":
-                    return self.send_json(200, kube.events(namespace, query.get("regardingName", ""), int(query.get("limit", 100))))
+                    return self.send_json(200, self.read_tool("get_events", {"namespace": namespace, "regarding_name": query.get("regardingName", ""), "limit": query.get("limit", 100)}, namespace)["result"])
                 if path == "/v1/catalog":
                     return self.send_json(200, {"fixes": public_catalog(), "policy": {"namespace": "kravel-demo", "approvalTimeoutSeconds": 300, "arbitraryCommands": False}})
                 if path == "/v1/proposals":
@@ -137,12 +148,7 @@ def create_server(store, config, kube):
                     return self.send_json(200, run_debugger(kube, store, config, question, namespace))
                 if path == "/v1/tools/run":
                     name = str(body.get("tool") or "")
-                    args = enforce_read_scope(name, body.get("arguments") or {}, namespace)
-                    started = time.perf_counter()
-                    result = execute_read_tool(name, args, kube)
-                    elapsed = (time.perf_counter() - started) * 1000
-                    store.record("debugger", f"tool.{name}", actor="operator", resource=str(args.get("name") or args.get("pod") or args.get("kind") or ""), duration_ms=elapsed, details={"namespace": namespace})
-                    return self.send_json(200, {"tool": name, "arguments": args, "result": result, "durationMs": elapsed})
+                    return self.send_json(200, self.read_tool(name, body.get("arguments") or {}, namespace))
                 if path == "/v1/proposals":
                     payload = {"fixId": str(body.get("fixId") or ""), "namespace": namespace, "actor": "kravel-debugger"}
                     proposal = _broker_request(config, "/v1/proposals", "POST", payload)

@@ -14,30 +14,16 @@ def _labels(**values) -> str:
     return "{" + ",".join(f'{key}="{_escape(value)}"' for key, value in values.items()) + "}"
 
 
-def _histogram(lines: list[str], name: str, values: list[float], labels: dict):
-    cumulative = 0
-    for bucket in BUCKETS:
-        cumulative = sum(1 for value in values if value <= bucket)
-        lines.append(f"{name}_bucket{_labels(**labels, le=bucket)} {cumulative}")
-    lines.append(f"{name}_bucket{_labels(**labels, le='+Inf')} {len(values)}")
-    lines.append(f"{name}_sum{_labels(**labels)} {sum(values)}")
-    lines.append(f"{name}_count{_labels(**labels)} {len(values)}")
-
-
 def prometheus_metrics(store, component: str = "debugger") -> str:
-    audit = store.audit_entries(1000)
-    runs = store.investigations(1000)
-    proposals = store.proposals(500)
+    summary = store.metric_summary(BUCKETS)
+    runs = store.investigations(1)
+    proposals = store.active_proposals()
     lines = [
         "# HELP kravel_audit_events_total Audited Kravel actions.",
         "# TYPE kravel_audit_events_total counter",
     ]
-    counts = {}
-    for entry in audit:
-        key = (entry["component"], entry["action"], entry["outcome"])
-        counts[key] = counts.get(key, 0) + 1
-    for (entry_component, action, outcome), count in sorted(counts.items()):
-        lines.append(f"kravel_audit_events_total{_labels(component=entry_component, action=action, outcome=outcome)} {count}")
+    for entry in summary["audit"]:
+        lines.append(f"kravel_audit_events_total{_labels(component=entry['component'], action=entry['action'], outcome=entry['outcome'])} {entry['count']}")
 
     lines.extend([
         "# HELP kravel_debug_investigations_total Debugger investigations by status.",
@@ -49,11 +35,8 @@ def prometheus_metrics(store, component: str = "debugger") -> str:
         "# HELP kravel_debug_total_latency_distribution_seconds End-to-end debugger latency.",
         "# TYPE kravel_debug_total_latency_distribution_seconds histogram",
     ])
-    run_counts = {}
-    for run in runs:
-        run_counts[run["status"]] = run_counts.get(run["status"], 0) + 1
-    for status, count in sorted(run_counts.items()):
-        lines.append(f"kravel_debug_investigations_total{_labels(status=status)} {count}")
+    for run in summary["runs"]:
+        lines.append(f"kravel_debug_investigations_total{_labels(status=run['status'])} {run['count']}")
     if runs:
         latest = runs[0]
         stages = {
@@ -67,9 +50,14 @@ def prometheus_metrics(store, component: str = "debugger") -> str:
             "mlflow_trace_flush": latest["mlflow_flush_ms"],
         }
         for stage, milliseconds in stages.items():
-            lines.append(f"kravel_debug_latency_seconds{_labels(stage=stage, trace_id=latest['trace_id'])} {float(milliseconds) / 1000}")
+            lines.append(f"kravel_debug_latency_seconds{_labels(stage=stage)} {float(milliseconds) / 1000}")
         lines.append(f"kravel_debug_tool_calls {int(latest['tool_calls'])}")
-        _histogram(lines, "kravel_debug_total_latency_distribution_seconds", [float(run["total_ms"]) / 1000 for run in runs], {})
+        histogram_name = "kravel_debug_total_latency_distribution_seconds"
+        for bucket, count in zip(BUCKETS, summary["buckets"]):
+            lines.append(f"{histogram_name}_bucket{_labels(le=bucket)} {count}")
+        lines.append(f"{histogram_name}_bucket{_labels(le='+Inf')} {summary['latency']['count']}")
+        lines.append(f"{histogram_name}_sum {summary['latency']['sum']}")
+        lines.append(f"{histogram_name}_count {summary['latency']['count']}")
 
     lines.extend([
         "# HELP kravel_approval_proposals_total Approval proposals by status.",
@@ -79,19 +67,14 @@ def prometheus_metrics(store, component: str = "debugger") -> str:
         "# HELP kravel_fixes_executed_total Approved fix executions.",
         "# TYPE kravel_fixes_executed_total counter",
     ])
-    statuses = {}
-    executed = {}
     now = datetime.now().astimezone()
     for proposal in proposals:
-        statuses[proposal["status"]] = statuses.get(proposal["status"], 0) + 1
         if proposal["status"] == "pending":
             created = datetime.fromisoformat(proposal["created_at"].replace("Z", "+00:00"))
             lines.append(f"kravel_approval_age_seconds{_labels(proposal_id=proposal['id'][:8], fix_id=proposal['fix_id'])} {max((now - created).total_seconds(), 0)}")
-        if proposal["status"] == "executed":
-            executed[proposal["fix_id"]] = executed.get(proposal["fix_id"], 0) + 1
-    for status, count in sorted(statuses.items()):
-        lines.append(f"kravel_approval_proposals_total{_labels(status=status)} {count}")
-    for fix_id, count in sorted(executed.items()):
-        lines.append(f"kravel_fixes_executed_total{_labels(fix_id=fix_id)} {count}")
+    for proposal in summary["proposals"]:
+        lines.append(f"kravel_approval_proposals_total{_labels(status=proposal['status'])} {proposal['count']}")
+    for fix in summary["fixes"]:
+        lines.append(f"kravel_fixes_executed_total{_labels(fix_id=fix['fix_id'])} {fix['count']}")
     lines.append(f"kravel_component_info{_labels(component=component)} 1")
     return "\n".join(lines) + "\n"

@@ -35,6 +35,8 @@ RESOURCE_MAP = {
     "jobs": ("batch", "v1", "jobs", True),
     "cronjobs": ("batch", "v1", "cronjobs", True),
     "ingresses": ("networking.k8s.io", "v1", "ingresses", True),
+    "networkpolicies": ("networking.k8s.io", "v1", "networkpolicies", True),
+    "horizontalpodautoscalers": ("autoscaling", "v2", "horizontalpodautoscalers", True),
     "endpointslices": ("discovery.k8s.io", "v1", "endpointslices", True),
 }
 

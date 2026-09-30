@@ -40,6 +40,7 @@ class SlackApprovalClient:
             f"Kravel approval requested ({proposal['id'][:8]})\n"
             f"Fix: {proposal['fix_id']} · {proposal['resource']}\n"
             f"Command: `{proposal['command']}`\n"
+            f"Server dry-run output: ```{json.dumps(proposal['dryRun'], indent=2)[:5000]}```\n"
             f"Dry run passed. React with :thumbsup: to approve or :x: to reject. Expires in 5 minutes."
         )
         result = self._call("chat.postMessage", {"channel": self.channel_id, "text": text, "unfurl_links": False, "unfurl_media": False})

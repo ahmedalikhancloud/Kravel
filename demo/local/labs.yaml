@@ -25,11 +25,6 @@ spec:
           resources:
             requests: {cpu: 5m, memory: 8Mi}
             limits: {cpu: 100m, memory: 32Mi}
-          volumeMounts:
-            - {name: memory, mountPath: /oom}
-      volumes:
-        - name: memory
-          emptyDir: {medium: Memory, sizeLimit: 160Mi}
 ---
 apiVersion: apps/v1
 kind: Deployment

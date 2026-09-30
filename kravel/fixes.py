@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import copy
+import shlex
+
+from .utils import stable_json
 
 
 DEMO_NAMESPACE = "kravel-demo"
@@ -72,11 +75,19 @@ def get_fix(fix_id: str, namespace: str) -> dict:
         raise ValueError("The approval broker can mutate only the disposable kravel-demo namespace")
     if fix_id not in FIX_CATALOG:
         raise ValueError("Unknown or non-allowlisted fix")
-    return copy.deepcopy({"id": fix_id, "namespace": namespace, **FIX_CATALOG[fix_id]})
+    fix = copy.deepcopy({"id": fix_id, "namespace": namespace, **FIX_CATALOG[fix_id]})
+    # The review command describes exactly the structured patches that are executed.
+    fix["command"] = " && ".join(
+        f"kubectl -n {DEMO_NAMESPACE} patch {operation['kind']} {operation['name']} "
+        f"--type={'strategic' if 'strategic' in operation['contentType'] else 'merge'} "
+        f"-p {shlex.quote(stable_json(operation['patch']))}"
+        for operation in fix["operations"]
+    )
+    return fix
 
 
 def public_catalog() -> list[dict]:
-    return [{"id": fix_id, "title": item["title"], "resource": item["resource"], "command": item["command"]} for fix_id, item in FIX_CATALOG.items()]
+    return [{key: fix[key] for key in ("id", "title", "resource", "command")} for fix in (get_fix(fix_id, DEMO_NAMESPACE) for fix_id in FIX_CATALOG)]
 
 
 def summarize_result(operation: dict, response: dict) -> dict:
@@ -87,6 +98,7 @@ def summarize_result(operation: dict, response: dict) -> dict:
         "resourceVersion": obj.get("metadata", {}).get("resourceVersion", ""),
         "generation": obj.get("metadata", {}).get("generation"),
         "data": obj.get("data", {}),
+        "templateAnnotations": obj.get("spec", {}).get("template", {}).get("metadata", {}).get("annotations", {}),
         "containers": [
             {
                 "name": container.get("name"),

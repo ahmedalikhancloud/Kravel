@@ -31,3 +31,10 @@ def test_metrics_expose_guardrails_mlflow_approvals_and_audit():
     assert 'stage="mlflow_trace_flush"' in metrics
     assert 'status="pending"' in metrics
     assert "kravel_audit_events_total" in metrics
+
+
+def test_counters_do_not_reset_when_ui_history_page_fills():
+    store = AuditStore()
+    for _ in range(1005):
+        store.record("debugger", "tool.get_pods")
+    assert 'kravel_audit_events_total{component="debugger",action="tool.get_pods",outcome="success"} 1005' in prometheus_metrics(store)

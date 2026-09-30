@@ -60,3 +60,28 @@ def test_generic_failure_is_diagnosed_without_offering_a_demo_fix():
     issue_type, fix_id, _evidence = _container_issue(pod)
     assert issue_type == "imagepullbackoff"
     assert fix_id == ""
+
+
+def test_fix_suggestions_require_matching_failure_and_demo_namespace():
+    pod = FakeKube.pod("oom-demo-a", "oom-demo", waiting="ImagePullBackOff")
+    assert _container_issue(pod)[1] == ""
+    pod = FakeKube.pod("image-demo-a", "image-demo", waiting="ImagePullBackOff")
+    assert _container_issue(pod, "production")[1] == ""
+
+
+def test_model_cannot_switch_selected_namespace():
+    with pytest.raises(ValueError):
+        enforce_read_scope("get_pods", {"namespace": "production"}, "kravel-demo")
+
+
+def test_deleted_pods_do_not_leave_ghost_failures():
+    class DeletingKube(FakeKube):
+        def list_resources(self, kind, namespace, **kwargs):
+            result = super().list_resources(kind, namespace, **kwargs)
+            if kind == "pods":
+                for pod in result["items"]:
+                    pod["metadata"]["deletionTimestamp"] = "2026-09-30T12:00:00Z"
+            return result
+    result = discover_issues(DeletingKube(), "kravel-demo")
+    assert result["podCount"] == 0
+    assert all(item["type"] == "bad_configmap" for item in result["issues"])

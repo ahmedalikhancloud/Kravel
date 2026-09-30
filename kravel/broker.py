@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hmac
+import copy
+import hashlib
 import json
 import threading
 import time
@@ -12,7 +14,7 @@ from urllib.parse import urlparse
 from .fixes import get_fix, summarize_result
 from .metrics import prometheus_metrics
 from .slack import SlackApprovalClient
-from .utils import to_iso
+from .utils import stable_json, to_iso
 
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
@@ -32,13 +34,51 @@ class ApprovalBroker:
         self.kube, self.store, self.config = kube, store, config
         self.slack = SlackApprovalClient(config.slack_bot_token, config.slack_channel_id)
         self.threads: dict[str, threading.Thread] = {}
+        self.lock = threading.RLock()
+        for proposal in self.store.active_proposals():
+            if proposal["status"] == "pending":
+                self._start_waiter(proposal["id"])
+            elif proposal["status"] in {"approved", "executing"}:
+                # An interrupted execution may have partially succeeded. Never replay it.
+                self.store.transition_proposal(proposal["id"], proposal["status"], "failed", result={"error": "Broker restarted during approval/execution; inspect and prepare a new proposal."})
+                self.store.record("approval-broker", "proposal.interrupted", resource=proposal["resource"], outcome="error", details={"proposalId": proposal["id"]})
+
+    def _start_waiter(self, proposal_id: str):
+        thread = threading.Thread(target=self._wait, args=(proposal_id,), daemon=True, name=f"approval-{proposal_id[:8]}")
+        self.threads[proposal_id] = thread
+        thread.start()
+
+    @staticmethod
+    def _fingerprint(obj: dict) -> str:
+        return hashlib.sha256(stable_json({key: obj.get(key) for key in ("spec", "data", "binaryData")}).encode()).hexdigest()
+
+    @staticmethod
+    def _plan_hash(fix: dict) -> str:
+        return hashlib.sha256(stable_json(fix["operations"]).encode()).hexdigest()
+
+    def _guarded_patch(self, operation: dict, obj: dict) -> dict:
+        patch = copy.deepcopy(operation["patch"])
+        metadata = obj.get("metadata", {})
+        if not metadata.get("uid") or not metadata.get("resourceVersion"):
+            raise ValueError("Resource identity/version is missing; refusing mutation")
+        patch.setdefault("metadata", {}).update({"uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"]})
+        return patch
 
     def _dry_run(self, fix: dict) -> list[dict]:
-        return [summarize_result(operation, self.kube.patch(operation["kind"], operation["name"], fix["namespace"], operation["patch"], content_type=operation["contentType"], dry_run=True)) for operation in fix["operations"]]
+        results = []
+        for operation in fix["operations"]:
+            obj = self.kube.get_resource(operation["kind"], operation["name"], fix["namespace"])["object"]
+            response = self.kube.patch(operation["kind"], operation["name"], fix["namespace"], self._guarded_patch(operation, obj), content_type=operation["contentType"], dry_run=True)
+            results.append({**summarize_result(operation, response), "beforeUid": obj["metadata"]["uid"], "beforeFingerprint": self._fingerprint(obj), "planHash": self._plan_hash(fix)})
+        return results
 
     def create(self, fix_id: str, namespace: str, actor: str = "kravel-debugger") -> dict:
-        for existing in self.store.proposals(100):
-            if existing["fix_id"] == fix_id and existing["namespace"] == namespace and existing["status"] in {"pending", "approved"}:
+        with self.lock:
+            return self._create(fix_id, namespace, actor)
+
+    def _create(self, fix_id: str, namespace: str, actor: str) -> dict:
+        for existing in self.store.active_proposals():
+            if existing["fix_id"] == fix_id and existing["namespace"] == namespace and existing["status"] in {"pending", "approved", "executing"}:
                 return existing
         fix = get_fix(fix_id, namespace)
         dry_started = time.perf_counter()
@@ -60,9 +100,7 @@ class ApprovalBroker:
                 self.store.record("approval-broker", "slack.posted", actor="broker", resource=fix["resource"], details={"proposalId": proposal["id"], "channel": message["channel"]})
             except Exception as exc:
                 self.store.record("approval-broker", "slack.failed", actor="broker", resource=fix["resource"], outcome="error", details={"proposalId": proposal["id"], "errorType": type(exc).__name__})
-        thread = threading.Thread(target=self._wait, args=(proposal["id"],), daemon=True, name=f"approval-{proposal['id'][:8]}")
-        self.threads[proposal["id"]] = thread
-        thread.start()
+        self._start_waiter(proposal["id"])
         return proposal
 
     def _wait(self, proposal_id: str):
@@ -73,12 +111,11 @@ class ApprovalBroker:
                 return
             if proposal["status"] == "approved":
                 return self._execute(proposal)
-            if proposal["status"] in {"rejected", "expired", "executed", "failed"}:
+            if proposal["status"] in {"rejected", "expired", "executing", "executed", "failed"}:
                 return
             expires = datetime.fromisoformat(proposal["expires_at"].replace("Z", "+00:00"))
             if datetime.now(timezone.utc) >= expires:
-                self.store.update_proposal(proposal_id, status="expired")
-                self.store.record("approval-broker", "proposal.expired", actor="broker", resource=proposal["resource"], outcome="timeout", details={"proposalId": proposal_id})
+                self._expire(proposal)
                 return
             if self.slack.enabled and proposal.get("slack_ts") and time.monotonic() - last_slack_poll >= 3:
                 last_slack_poll = time.monotonic()
@@ -86,11 +123,19 @@ class ApprovalBroker:
                     decision = self.slack.decision(proposal["slack_channel"], proposal["slack_ts"])
                     if decision:
                         status, actor = decision
-                        self.store.update_proposal(proposal_id, status=status, approved_at=to_iso() if status == "approved" else "", approval_actor=f"slack:{actor}")
-                        self.store.record("approval-broker", f"proposal.{status}", actor=f"slack:{actor}", resource=proposal["resource"], outcome=status, details={"proposalId": proposal_id})
+                        if status == "approved":
+                            self.approve(proposal_id, f"slack:{actor}")
+                        else:
+                            self.reject(proposal_id, f"slack:{actor}")
                 except Exception as exc:
                     self.store.record("approval-broker", "slack.poll_failed", actor="broker", resource=proposal["resource"], outcome="error", details={"proposalId": proposal_id, "errorType": type(exc).__name__})
             time.sleep(1)
+
+    def _expire(self, proposal: dict):
+        updated = self.store.transition_proposal(proposal["id"], "pending", "expired")
+        if updated:
+            self.store.record("approval-broker", "proposal.expired", actor="broker", resource=proposal["resource"], outcome="timeout", details={"proposalId": proposal["id"]})
+        return updated or self.store.proposal(proposal["id"])
 
     def approve(self, proposal_id: str, actor: str) -> dict:
         proposal = self.store.proposal(proposal_id)
@@ -100,25 +145,42 @@ class ApprovalBroker:
             return proposal
         expires = datetime.fromisoformat(proposal["expires_at"].replace("Z", "+00:00"))
         if datetime.now(timezone.utc) >= expires:
-            return self.store.update_proposal(proposal_id, status="expired")
-        proposal = self.store.update_proposal(proposal_id, status="approved", approved_at=to_iso(), approval_actor=actor)
-        self.store.record("approval-broker", "proposal.approved", actor=actor, resource=proposal["resource"], outcome="approved", details={"proposalId": proposal_id})
-        return proposal
+            return self._expire(proposal)
+        updated = self.store.transition_proposal(proposal_id, "pending", "approved", approved_at=to_iso(), approval_actor=actor)
+        if updated:
+            self.store.record("approval-broker", "proposal.approved", actor=actor, resource=proposal["resource"], outcome="approved", details={"proposalId": proposal_id})
+        return updated or self.store.proposal(proposal_id)
 
     def reject(self, proposal_id: str, actor: str) -> dict:
         proposal = self.store.proposal(proposal_id)
         if not proposal:
             raise ValueError("Proposal not found")
         if proposal["status"] == "pending":
-            proposal = self.store.update_proposal(proposal_id, status="rejected", approval_actor=actor)
-            self.store.record("approval-broker", "proposal.rejected", actor=actor, resource=proposal["resource"], outcome="rejected", details={"proposalId": proposal_id})
-        return proposal
+            updated = self.store.transition_proposal(proposal_id, "pending", "rejected", approval_actor=actor)
+            if updated:
+                self.store.record("approval-broker", "proposal.rejected", actor=actor, resource=proposal["resource"], outcome="rejected", details={"proposalId": proposal_id})
+        return self.store.proposal(proposal_id)
 
     def _execute(self, proposal: dict):
-        fix = get_fix(proposal["fix_id"], proposal["namespace"])
+        proposal = self.store.transition_proposal(proposal["id"], "approved", "executing")
+        if not proposal:
+            return None
         started = time.perf_counter()
+        results = []
         try:
-            results = [summarize_result(operation, self.kube.patch(operation["kind"], operation["name"], fix["namespace"], operation["patch"], content_type=operation["contentType"], dry_run=False)) for operation in fix["operations"]]
+            fix = get_fix(proposal["fix_id"], proposal["namespace"])
+            dry_runs = proposal["dryRun"]
+            if len(dry_runs) != len(fix["operations"]) or any(result.get("planHash") != self._plan_hash(fix) for result in dry_runs):
+                raise ValueError("Fix catalog changed since review; a new dry-run and approval are required")
+            prepared = []
+            for operation, reviewed in zip(fix["operations"], dry_runs):
+                obj = self.kube.get_resource(operation["kind"], operation["name"], fix["namespace"])["object"]
+                if obj.get("metadata", {}).get("uid") != reviewed.get("beforeUid") or self._fingerprint(obj) != reviewed.get("beforeFingerprint"):
+                    raise ValueError("Resource changed or was reset after dry-run; a new proposal is required")
+                prepared.append((operation, self._guarded_patch(operation, obj)))
+            for operation, patch in prepared:
+                response = self.kube.patch(operation["kind"], operation["name"], fix["namespace"], patch, content_type=operation["contentType"], dry_run=False)
+                results.append(summarize_result(operation, response))
             elapsed = (time.perf_counter() - started) * 1000
             updated = self.store.update_proposal(proposal["id"], status="executed", executed_at=to_iso(), result={"operations": results})
             self.store.record("approval-broker", "fix.executed", actor=proposal["approval_actor"], resource=proposal["resource"], outcome="success", duration_ms=elapsed, details={"proposalId": proposal["id"], "fixId": proposal["fix_id"]})
@@ -130,7 +192,7 @@ class ApprovalBroker:
             return updated
         except Exception as exc:
             elapsed = (time.perf_counter() - started) * 1000
-            self.store.update_proposal(proposal["id"], status="failed", executed_at=to_iso(), result={"error": str(exc)})
+            self.store.update_proposal(proposal["id"], status="failed", executed_at=to_iso(), result={"error": str(exc), "operations": results})
             self.store.record("approval-broker", "fix.failed", actor=proposal["approval_actor"], resource=proposal["resource"], outcome="error", duration_ms=elapsed, details={"proposalId": proposal["id"], "fixId": proposal["fix_id"], "errorType": type(exc).__name__})
 
 
@@ -202,6 +264,7 @@ def create_broker_server(broker: ApprovalBroker, config):
                     return self.json(201, broker.create(str(body.get("fixId", "")), str(body.get("namespace") or config.default_namespace), str(body.get("actor") or "kravel-debugger")))
                 if path.startswith("/v1/proposals/") and path.endswith(("/approve", "/reject")):
                     if not self.local_authorized():
+                        broker.store.record("approval-broker", "approval.denied", actor="unauthenticated", outcome="denied", details={"reason": "invalid_or_missing_token"})
                         return self.json(401, {"error": "approval_token_required"})
                     proposal_id, action = path.split("/")[3:5]
                     actor = str(body.get("actor") or "local-human")[:80]
@@ -209,6 +272,7 @@ def create_broker_server(broker: ApprovalBroker, config):
                     return self.json(200, proposal)
                 return self.json(404, {"error": "not_found"})
             except Exception as exc:
+                broker.store.record("approval-broker", "request.rejected", actor="caller", outcome="error", details={"path": path, "errorType": type(exc).__name__})
                 return self.json(400, {"error": str(exc)})
 
     return ThreadingHTTPServer((config.host, config.port), Handler)

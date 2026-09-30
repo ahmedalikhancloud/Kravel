@@ -93,7 +93,7 @@ h3 { font-size: 15px; }
 .world-hud b { max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--amber); letter-spacing: .04em; }
 .resource-world { position: absolute; z-index: 2; inset: 48px 22px 28px; display: grid; grid-template-columns: repeat(6, minmax(84px, 1fr)); align-items: center; justify-items: center; gap: 12px 8px; transform-style: preserve-3d; transform: rotateY(var(--camera-y)); transition: transform .28s cubic-bezier(.2,.8,.2,1); }
 .world-empty { grid-column: 1 / -1; align-self: center; color: var(--muted); }
-.resource-model { --model-color: var(--blue); position: relative; width: 100%; min-width: 0; height: 132px; border: 0; outline: 0; padding: 0; background: transparent; color: var(--ink); transform-style: preserve-3d; opacity: 0; animation: model-spawn .48s cubic-bezier(.2,.9,.25,1.2) forwards; animation-delay: var(--spawn-delay); transition: transform .22s cubic-bezier(.2,.9,.25,1.15), filter .22s ease; }
+.resource-model { --model-color: var(--blue); position: relative; width: 100%; min-width: 0; height: 132px; border: 0; outline: 0; padding: 0; background: transparent; color: var(--ink); transform-style: preserve-3d; opacity: 1; animation: model-spawn .48s cubic-bezier(.2,.9,.25,1.2) backwards; animation-delay: var(--spawn-delay); transition: transform .22s cubic-bezier(.2,.9,.25,1.15), filter .22s ease; }
 .resource-model:hover, .resource-model:focus-visible { z-index: 7; transform: translateY(-10px) scale(1.07); filter: brightness(1.18); }
 .resource-model:focus-visible { outline: 2px solid var(--amber); outline-offset: 5px; border-radius: 12px; }
 .resource-model.selected { z-index: 6; transform: translateY(-7px) scale(1.06); }
@@ -188,6 +188,10 @@ h3 { font-size: 15px; }
 
 #toast { position: fixed; right: 18px; bottom: 18px; z-index: 50; opacity: 0; transform: translateY(10px); padding: 10px 14px; border: 1px solid rgba(60,232,208,.38); border-radius: 10px; background: #0a1b28; color: var(--cyan); pointer-events: none; transition: .2s ease; }
 #toast.show { opacity: 1; transform: translateY(0); }
+
+/* Keep the themed hover cursor above component-specific cursor declarations. */
+body button:not(:disabled), body a, body select, body summary, body [role="button"], body [role="tab"] { cursor: url('/ui/cursor-pointer.svg') 8 3, pointer; }
+body button:disabled { cursor: not-allowed; }
 
 @keyframes model-spawn { from { opacity: 0; transform: translateY(18px) scale(.75); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes warning-blink { 50% { opacity: .25; } }

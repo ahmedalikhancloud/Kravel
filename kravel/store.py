@@ -170,6 +170,22 @@ class AuditStore:
             ids = [row[0] for row in self.connection.execute("SELECT id FROM proposals ORDER BY created_at DESC LIMIT ?", (min(max(limit, 1), 500),)).fetchall()]
         return [item for item in (self.proposal(proposal_id) for proposal_id in ids) if item]
 
+    def active_proposals(self) -> list[dict]:
+        with self.lock:
+            ids = [row[0] for row in self.connection.execute("SELECT id FROM proposals WHERE status IN ('pending', 'approved', 'executing') ORDER BY created_at DESC").fetchall()]
+        return [item for item in (self.proposal(proposal_id) for proposal_id in ids) if item]
+
+    def metric_summary(self, buckets: list[float]) -> dict:
+        """Aggregate all persisted history, not a rolling UI page of counter values."""
+        with self.lock:
+            audit = [dict(row) for row in self.connection.execute("SELECT component, action, outcome, COUNT(*) AS count FROM audit_entries GROUP BY component, action, outcome")]
+            runs = [dict(row) for row in self.connection.execute("SELECT status, COUNT(*) AS count FROM investigations GROUP BY status")]
+            proposals = [dict(row) for row in self.connection.execute("SELECT status, COUNT(*) AS count FROM proposals GROUP BY status")]
+            fixes = [dict(row) for row in self.connection.execute("SELECT fix_id, COUNT(*) AS count FROM proposals WHERE status = 'executed' GROUP BY fix_id")]
+            latency = self.connection.execute("SELECT COUNT(*) AS count, COALESCE(SUM(total_ms / 1000.0), 0) AS sum FROM investigations").fetchone()
+            histogram = [self.connection.execute("SELECT COUNT(*) FROM investigations WHERE total_ms <= ?", (bucket * 1000,)).fetchone()[0] for bucket in buckets]
+        return {"audit": audit, "runs": runs, "proposals": proposals, "fixes": fixes, "latency": dict(latency), "buckets": histogram}
+
     def update_proposal(self, proposal_id: str, **changes) -> dict | None:
         allowed = {"status", "approved_at", "approval_actor", "executed_at", "slack_channel", "slack_ts"}
         values = {key: value for key, value in changes.items() if key in allowed}
@@ -180,6 +196,23 @@ class AuditStore:
         assignments = ", ".join(f"{key} = ?" for key in values)
         with self.lock, self.connection:
             self.connection.execute(f"UPDATE proposals SET {assignments} WHERE id = ?", (*values.values(), proposal_id))
+        return self.proposal(proposal_id)
+
+    def transition_proposal(self, proposal_id: str, expected_status: str, status: str, **changes) -> dict | None:
+        """Claim a state transition once; concurrent decisions cannot overwrite one another."""
+        allowed = {"approved_at", "approval_actor", "executed_at"}
+        values = {key: value for key, value in changes.items() if key in allowed}
+        values["status"] = status
+        if "result" in changes:
+            values["result_json"] = stable_json(changes["result"])
+        assignments = ", ".join(f"{key} = ?" for key in values)
+        with self.lock, self.connection:
+            cursor = self.connection.execute(
+                f"UPDATE proposals SET {assignments} WHERE id = ? AND status = ?",
+                (*values.values(), proposal_id, expected_status),
+            )
+            if cursor.rowcount != 1:
+                return None
         return self.proposal(proposal_id)
 
     def stats(self) -> dict:

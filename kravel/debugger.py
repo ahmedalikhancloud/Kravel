@@ -9,7 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from openai import OpenAI
 
 from .fixes import public_catalog
-from .guardrails import guard_debugger_output, guard_model_input
+from .guardrails import guard_debugger_output, guard_model_input, guard_tool_evidence
 from .tools import READ_ONLY_TOOLS, discover_issues, enforce_read_scope, execute_read_tool
 from .tracing import MlflowTracer
 from .utils import is_internal_hostname, safe_service_url, stable_json, to_iso
@@ -33,6 +33,7 @@ class DebugState(TypedDict, total=False):
     turns: int
     model_ms: float
     tool_ms: float
+    evidence_guardrail_ms: float
     usage: dict
 
 
@@ -50,14 +51,41 @@ def _assistant_message(message) -> dict:
     return result
 
 
-def _compact_result(result) -> str:
-    encoded = stable_json(result)
-    if len(encoded) <= 12_000:
-        return encoded
-    if isinstance(result, dict) and isinstance(result.get("items"), list):
-        slim = {**result, "items": result["items"][:12], "truncated": True}
-        encoded = stable_json(slim)
-    return encoded[:12_000] + "\n[truncated by tool-output guardrail]"
+def _compact_evidence(value):
+    """Remove API bookkeeping, retaining actual specs, failure states, and log text."""
+    if isinstance(value, list):
+        return [_compact_evidence(item) for item in value[:20]]
+    if not isinstance(value, dict):
+        return value
+    ignored = {"managedFields", "kubectl.kubernetes.io/last-applied-configuration", "volumeMounts", "hostIPs", "podIPs", "allocatedResources", "lastProbeTime", "lastTransitionTime", "observedGeneration", "imageID", "containerID"}
+    result = {key: _compact_evidence(item) for key, item in value.items() if key not in ignored}
+    if isinstance(value.get("items"), list):
+        items = value["items"]
+        # Failed Pods come first, so healthy replicas cannot crowd out the incident.
+        if any(item.get("kind") == "Pod" for item in items):
+            items = sorted(items, key=lambda item: all(status.get("ready") for status in item.get("status", {}).get("containerStatuses", [])))
+        result["items"] = [_compact_evidence(item) for item in items[:12]]
+        if len(items) > 12:
+            result["truncated"] = True
+            result["totalItems"] = len(items)
+    return result
+
+
+def _bound_conversation(messages: list[dict], budget: int = 18_000) -> list[dict]:
+    """Keep tool-call/result pairing intact while trimming oldest evidence first."""
+    bounded = [dict(message) for message in messages]
+    def size():
+        return sum(len(stable_json(message)) for message in bounded)
+    for role in ("tool", "assistant", "user"):
+        for message in bounded:
+            if size() <= budget:
+                return bounded
+            content = message.get("content") or ""
+            if message.get("role") != role or len(content) <= 450:
+                continue
+            keep = max(250, len(content) - (size() - budget) - 100)
+            message["content"] = content[:keep] + "\n[evidence truncated to fit local model context; request a focused read if needed]"
+    return bounded
 
 
 def run_debugger(kube, store, config, question: str, namespace: str) -> dict:
@@ -77,9 +105,9 @@ def run_debugger(kube, store, config, question: str, namespace: str) -> dict:
         with tracer.span("qwen.inference", "LLM", {"turn": state.get("turns", 0) + 1, "model": config.llm_model}) as span:
             response = client.chat.completions.create(
                 model=config.llm_model,
-                messages=state["messages"],
+                messages=_bound_conversation(state["messages"]),
                 tools=READ_ONLY_TOOLS,
-                tool_choice="auto",
+                tool_choice="none" if state.get("turns", 0) >= config.llm_max_turns - 1 else "auto",
                 temperature=0,
                 max_tokens=560,
                 **({"extra_body": {"reasoning_budget": config.llm_reasoning_budget}} if config.llm_reasoning_budget else {}),
@@ -98,13 +126,15 @@ def run_debugger(kube, store, config, question: str, namespace: str) -> dict:
         messages = list(state["messages"])
         records = list(state.get("tool_records", []))
         tool_ms = state.get("tool_ms", 0.0)
+        evidence_guardrail_ms = state.get("evidence_guardrail_ms", 0.0)
         for call in messages[-1].get("tool_calls", []):
             name = call["function"]["name"]
-            raw_args = json.loads(call["function"].get("arguments") or "{}")
-            args = enforce_read_scope(name, raw_args, namespace)
+            args = {"namespace": namespace}
             started = time.perf_counter()
             outcome = "success"
             try:
+                raw_args = json.loads(call["function"].get("arguments") or "{}")
+                args = enforce_read_scope(name, raw_args, namespace)
                 with tracer.span(f"tool.{name}", "TOOL", {"namespace": args.get("namespace", ""), "tool": name}) as span:
                     result = execute_read_tool(name, args, kube)
                     span.set_outputs({"status": "success", "result_characters": len(stable_json(result))})
@@ -116,8 +146,12 @@ def run_debugger(kube, store, config, question: str, namespace: str) -> dict:
             resource = str(args.get("pod") or args.get("name") or args.get("kind") or "")
             store.record("debugger", f"tool.{name}", actor="qwen", resource=resource, outcome=outcome, duration_ms=elapsed, trace_id=tracer.trace_id, details={"namespace": args.get("namespace", "")})
             records.append({"tool": name, "arguments": args, "outcome": outcome, "durationMs": elapsed})
-            messages.append({"role": "tool", "tool_call_id": call["id"], "content": _compact_result(result)})
-        return {**state, "messages": messages, "tool_records": records, "tool_ms": tool_ms}
+            with tracer.span("guardrail.tool_evidence", "CHAIN", {"tool": name}) as span:
+                guarded_evidence = guard_tool_evidence(_compact_evidence(result), 8_000)
+                span.set_outputs({"decision": guarded_evidence["decision"], "finding_count": len(guarded_evidence["findings"]), "latency_ms": guarded_evidence["latencyMs"]})
+            evidence_guardrail_ms += guarded_evidence["latencyMs"]
+            messages.append({"role": "tool", "tool_call_id": call["id"], "content": guarded_evidence["value"]})
+        return {**state, "messages": messages, "tool_records": records, "tool_ms": tool_ms, "evidence_guardrail_ms": evidence_guardrail_ms}
 
     def route(state: DebugState):
         last = state["messages"][-1]
@@ -139,7 +173,7 @@ def run_debugger(kube, store, config, question: str, namespace: str) -> dict:
             with tracer.span("guardrail.input", "CHAIN", {"target": "qwen"}) as span:
                 guarded = guard_model_input(f"Operator question: {question}\nFixed namespace: {namespace}", "debugger", 8_000)
                 span.set_outputs({"decision": guarded["decision"], "finding_count": len(guarded["findings"]), "latency_ms": guarded["latencyMs"]})
-            state = app.invoke({"messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": guarded["value"]}], "tool_records": [], "turns": 0, "model_ms": 0.0, "tool_ms": 0.0})
+            state = app.invoke({"messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": guarded["value"]}], "tool_records": [], "turns": 0, "model_ms": 0.0, "tool_ms": 0.0, "evidence_guardrail_ms": 0.0})
             answer = next((message.get("content") for message in reversed(state["messages"]) if message.get("role") == "assistant" and message.get("content")), "Unable to produce a grounded answer.")
             with tracer.span("guardrail.output", "CHAIN", {"target": "qwen"}) as span:
                 output = guard_debugger_output(answer)
@@ -152,6 +186,7 @@ def run_debugger(kube, store, config, question: str, namespace: str) -> dict:
             root.set_outputs({"status": "success", "tool_calls": len(state["tool_records"]), "suggested_fix_count": len(suggested)})
         trace_flush_ms = tracer.flush()
         total_ms = (time.perf_counter() - wall_started) * 1000
+        guarded["latencyMs"] += state["evidence_guardrail_ms"]
         run = store.record_investigation(id=run_id, started_at=started_at, finished_at=to_iso(), namespace=namespace, status="success", total_ms=total_ms, model_ms=state["model_ms"], tool_ms=state["tool_ms"], tool_calls=len(state["tool_records"]), input_guardrail_ms=guarded["latencyMs"], output_guardrail_ms=output["latencyMs"], mlflow_setup_ms=tracer.setup_ms, mlflow_overhead_ms=tracer.overhead_ms, mlflow_flush_ms=trace_flush_ms, trace_id=tracer.trace_id)
         store.record("debugger", "investigation.completed", actor="qwen", outcome="success", duration_ms=total_ms, trace_id=tracer.trace_id, details={"runId": run_id, "toolCalls": len(state["tool_records"]), "suggestedFixes": [item["id"] for item in suggested]})
         return {

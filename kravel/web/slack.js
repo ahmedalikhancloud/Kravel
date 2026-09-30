@@ -1,5 +1,6 @@
 const params = new URLSearchParams(location.search);
-const token = params.get("token") || "";
+const token = params.get("token") || sessionStorage.getItem("kravel-approval-token") || "";
+if (token) sessionStorage.setItem("kravel-approval-token", token);
 if (token) history.replaceState({}, "", location.pathname);
 const messages = document.querySelector("#messages");
 const warning = document.querySelector("#tokenWarning");
@@ -34,6 +35,7 @@ async function decide(proposal, action, event) {
 }
 
 function render(proposals) {
+  const openDetails = new Set([...messages.querySelectorAll("details[open]")].map((details) => details.dataset.id));
   if (!proposals.length) {
     messages.replaceChildren(node("div", "empty", "No change requests yet. Ask Karl to prepare a fix from the Kravel debugger."));
     return;
@@ -45,6 +47,12 @@ function render(proposals) {
     const content = node("div");
     const meta = node("div", "meta"); meta.append(node("b", "", "Karl  APP"), node("time", "", time(proposal.created_at)));
     content.append(meta, node("h2", "", `Approval requested · ${proposal.fix_id}`), node("p", "", `${proposal.resource} in ${proposal.namespace}`), node("div", "command", proposal.command), node("span", "dryrun", "Kubernetes server dry-run passed"));
+    const details = node("details", "dryrun-details");
+    details.dataset.id = proposal.id;
+    details.open = openDetails.has(proposal.id);
+    details.append(node("summary", "", "Inspect server dry-run output"), node("pre", "", JSON.stringify(proposal.dryRun, null, 2)));
+    content.append(details);
+    if (proposal.result?.error) content.append(node("p", "", proposal.result.error));
     if (proposal.status === "pending") {
       const actions = node("div", "actions");
       const approve = node("button", "approve", "👍 Approve"); approve.disabled = !token; approve.addEventListener("click", (event) => decide(proposal, "approve", event));

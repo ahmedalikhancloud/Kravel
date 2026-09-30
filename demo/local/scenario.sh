@@ -11,7 +11,7 @@ break_scenario() {
   case "$1" in
     oom)
       section "Breaking oom-demo: allocate 96Mi inside a 32Mi container"
-      kubectl -n kravel-demo patch deployment oom-demo --type strategic -p '{"spec":{"template":{"spec":{"containers":[{"name":"oom-demo","resources":{"limits":{"memory":"32Mi"}},"command":["sh","-c"],"args":["dd if=/dev/zero of=/oom/blob bs=1M count=96; exec sleep 86400"]}]}}}}'
+      kubectl -n kravel-demo patch deployment oom-demo --type strategic -p '{"spec":{"template":{"spec":{"containers":[{"name":"oom-demo","resources":{"limits":{"memory":"32Mi"}},"command":["awk"],"args":["BEGIN { for (i = 0; i < 96; i++) blocks[i] = sprintf(\"%1048576s\", \"x\"); while (1) system(\"sleep 3600\") }"]}]}}}}'
       ;;
     imagepull)
       section "Breaking image-demo: roll out a nonexistent image"
@@ -58,7 +58,15 @@ reset_scenario() {
     *) die "Scenario must be oom, imagepull, crashloop, configmap, or all" ;;
   esac
   section "Waiting for the reset workloads"
-  for deployment in oom-demo image-demo crash-demo config-demo; do rollout kravel-demo "$deployment" 3m; done
+  local targets
+  case "$1" in
+    oom) targets='oom-demo' ;;
+    imagepull) targets='image-demo' ;;
+    crashloop) targets='crash-demo' ;;
+    configmap) targets='config-demo' ;;
+    all) targets='oom-demo image-demo crash-demo config-demo' ;;
+  esac
+  for deployment in $targets; do rollout kravel-demo "$deployment" 3m; done
 }
 
 case "$action" in

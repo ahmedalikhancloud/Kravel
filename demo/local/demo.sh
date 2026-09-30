@@ -2,22 +2,31 @@
 set -Eeuo pipefail
 . "$(dirname "$0")/common.sh"
 
+connect_only=false
+case "${1:-}" in
+  --connect-only) connect_only=true ;;
+  '') ;;
+  *) die "Usage: bash demo/local/demo.sh [--connect-only]" ;;
+esac
+
 assert_prerequisites
 qwen_profile
 stop_port_forwards
 rm -f -- "$KRAVEL_STATE"
 
-section "Resetting the disposable demo namespace"
-kubectl delete namespace kravel-demo --ignore-not-found --wait=true
-kubectl create namespace kravel-demo
-kubectl apply -f "$KRAVEL_ROOT/deploy/local.yaml"
-configure_kravel_model
-rollout kravel-system kravel 4m
-rollout kravel-system kravel-approval-broker 4m
+if [[ "$connect_only" == false ]]; then
+  section "Resetting the disposable demo namespace"
+  kubectl delete namespace kravel-demo --ignore-not-found --wait=true
+  kubectl create namespace kravel-demo
+  kubectl apply -f "$KRAVEL_ROOT/deploy/local.yaml"
+  configure_kravel_model
+  rollout kravel-system kravel 4m
+  rollout kravel-system kravel-approval-broker 4m
 
-section "Creating four healthy, independently breakable labs"
-kubectl apply -f "$KRAVEL_ROOT/demo/local/labs.yaml"
-for deployment in oom-demo image-demo crash-demo config-demo; do rollout kravel-demo "$deployment" 3m; done
+  section "Creating four healthy, independently breakable labs"
+  kubectl apply -f "$KRAVEL_ROOT/demo/local/labs.yaml"
+  for deployment in oom-demo image-demo crash-demo config-demo; do rollout kravel-demo "$deployment" 3m; done
+fi
 
 section "Binding the debugger, Local Slack, Grafana, and MLflow to localhost only"
 kravel_ui_pid="$(start_port_forward kravel-system kravel 8080 8080)"

@@ -4,6 +4,8 @@ import re
 import time
 import unicodedata
 
+from .utils import stable_json
+
 
 SECRET_PATTERNS = [
     ("private_key", re.compile(r"-----BEGIN [^-\r\n]{0,40}PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]{0,40}PRIVATE KEY-----", re.I)),
@@ -73,3 +75,27 @@ def guard_debugger_output(value, max_characters: int = 12_000):
     if not text.strip():
         raise ValueError("Debugger output guardrail rejected empty output")
     return {"value": text, "decision": "allow_with_warnings" if findings else "allow", "findings": findings, "latencyMs": _ms(started)}
+
+
+def guard_tool_evidence(value, max_characters: int = 12_000):
+    """Scan decoded string fields so escaped log newlines cannot hide instructions."""
+    started, findings = time.perf_counter(), []
+
+    def scan(item):
+        if isinstance(item, str):
+            if not item.strip():
+                return item
+            result = guard_model_input(item, "tool evidence", max_characters)
+            findings.extend(result["findings"])
+            return result["value"]
+        if isinstance(item, dict):
+            return {scan(str(key)): scan(content) for key, content in item.items()}
+        if isinstance(item, list):
+            return [scan(content) for content in item]
+        return item
+
+    encoded = stable_json(scan(value))
+    if len(encoded) > max_characters:
+        encoded = encoded[:max_characters - 80] + "\n[truncated by tool-evidence guardrail]"
+        findings.append({"code": "input_truncated", "count": 1})
+    return {"value": encoded, "decision": "allow_with_redactions" if findings else "allow", "findings": findings, "latencyMs": _ms(started)}

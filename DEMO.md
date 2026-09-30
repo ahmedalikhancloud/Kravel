@@ -72,11 +72,12 @@ The scenarios produce:
 4. Click the incident in the left rail or ask Karl: `Diagnose every current failure. Use evidence and state uncertainty.`
 5. Karl calls only read tools and returns a grounded diagnosis. The UI shows Qwen latency, tool count, and trace ID.
 6. Choose **Propose fix**. The separate broker resolves the fixed repair, asks Kubernetes to perform a server dry-run, logs the proposal, and starts the five-minute timer.
-7. In Local Slack, inspect the exact command and dry-run badge. Click **👍 Approve**.
+7. In Local Slack, inspect the exact command and expand **Inspect server dry-run output**. Click **👍 Approve**.
 8. The broker performs that one structured repair and records the approver, result, timing, and audit entry. The model does not execute it.
 9. Refresh Kravel and watch the object return to green.
 
 If nobody approves in five minutes, the proposal expires and nothing changes.
+If you reset a lab or edit its configuration while approval is pending, the broker refuses the stale proposal. Prepare a fresh dry-run and approval. A broker restart resumes pending timers but never replays an interrupted execution.
 
 ## 6. Show observability
 
@@ -89,7 +90,7 @@ In Grafana, open **Kravel Guarded Debugger**. Useful panels include:
 - approval states and pending age;
 - approved fix count and audited activity.
 
-In MLflow, open the **Kravel Guarded Debugger** experiment, then open an investigation trace. One root agent span contains the input guardrail, every Qwen inference, every Kubernetes tool call, output guardrail, and final issue discovery. Span inputs and outputs are bounded metadata, not raw credentials.
+In MLflow, open the **Kravel Guarded Debugger** experiment, then open an investigation trace. One root agent span contains the input guardrail, every Qwen inference, every Kubernetes tool call, each tool-evidence guardrail, output guardrail, and final issue discovery. Span inputs and outputs are bounded metadata, not raw credentials. The input-guardrail latency metric includes both the question scan and tool-evidence scans.
 
 ## 7. Reset and repeat
 
@@ -122,4 +123,4 @@ demo\local\scenario.cmd status
 kubectl get pods -A
 ```
 
-If a page is not reachable, rerun `demo\local\demo.cmd`; it replaces the localhost port-forwards. If preparation fails, the script prints Pod details and recent container logs for the failing component.
+If a page is not reachable, run `demo\local\demo.cmd --connect-only`; it replaces the localhost port-forwards without resetting the labs. Running `demo.cmd` without the flag starts a fresh healthy demo. If preparation fails, the script prints Pod details and recent container logs for the failing component.

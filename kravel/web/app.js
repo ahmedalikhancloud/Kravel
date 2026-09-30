@@ -75,17 +75,32 @@ function renderResourceWorld() {
     elements.resourceWorld.replaceChildren(node("div", "world-empty", "No supported resources found"));
     return;
   }
-  elements.resourceWorld.replaceChildren(...resources.map((resource, index) => {
-    const button = node("button", `resource-model kind-${resource.kind.toLowerCase()} ${resource.health}${sameResource(state.selectedResource, resource) ? " selected" : ""}`);
-    button.type = "button";
-    button.style.setProperty("--spawn-delay", `${Math.min(index * 36, 420)}ms`);
+  const existing = new Map([...elements.resourceWorld.children].map((button) => [button.dataset.key, button]));
+  const buttons = resources.map((resource, index) => {
+    const key = `${resource.namespace}/${resource.kind}/${resource.name}`;
+    let button = existing.get(key);
+    if (!button) {
+      button = node("button");
+      button.type = "button";
+      button.dataset.key = key;
+      button.style.setProperty("--spawn-delay", `${Math.min(index * 36, 420)}ms`);
+      const label = node("span", "resource-label");
+      label.append(node("b"), node("span"));
+      button.append(resourceShape(resource), node("i", "health-beacon"), label);
+      button.addEventListener("click", () => selectResource(button.resource));
+    }
+    button.resource = resource;
+    button.className = `resource-model kind-${resource.kind.toLowerCase()} ${resource.health}${sameResource(state.selectedResource, resource) ? " selected" : ""}`;
     button.setAttribute("aria-label", `Inspect ${resource.kind} ${resource.name}, ${resource.status}`);
-    const label = node("span", "resource-label");
-    label.append(node("b", "", resource.name), node("span", "", `${resource.kind} · ${resource.status}`));
-    button.append(resourceShape(resource), node("i", "health-beacon"), label);
-    button.addEventListener("click", () => selectResource(resource));
+    button.querySelector(".resource-label b").textContent = resource.name;
+    button.querySelector(".resource-label span").textContent = `${resource.kind} · ${resource.status}`;
     return button;
-  }));
+  });
+  // Preserve existing nodes: polling should update health, not respawn the whole board.
+  for (const child of [...elements.resourceWorld.children]) if (!buttons.includes(child)) child.remove();
+  buttons.forEach((button, index) => {
+    if (elements.resourceWorld.children[index] !== button) elements.resourceWorld.insertBefore(button, elements.resourceWorld.children[index] || null);
+  });
 }
 
 function renderIssues() {
@@ -242,6 +257,7 @@ async function createProposal(fixId) {
 }
 
 function renderProposals() {
+  const openDetails = new Set([...elements.proposalList.querySelectorAll("details[open]")].map((details) => details.dataset.id));
   if (!state.proposals.length) {
     elements.proposalList.replaceChildren(node("div", "empty-state", "No proposed changes. Diagnose a broken lab, then prepare an allowlisted fix."));
     return;
@@ -252,8 +268,11 @@ function renderProposals() {
     summary.append(node("h3", "", `${proposal.fix_id} · ${proposal.resource}`), node("span", "deadline", proposal.status === "pending" ? `expires ${formatTime(proposal.expires_at)}` : `approved by ${proposal.approval_actor || "—"}`));
     card.append(summary, node("span", "status-pill", proposal.status), node("code", "", proposal.command));
     const details = node("details");
+    details.dataset.id = proposal.id;
+    details.open = openDetails.has(proposal.id);
     details.append(node("summary", "", "Server dry-run output"), node("pre", "", pretty(proposal.dryRun)));
     card.append(details);
+    if (proposal.result?.error) card.append(node("p", "deadline", proposal.result.error));
     return card;
   }));
 }

@@ -11,6 +11,8 @@ Kravel is intentionally a debugger first and a tightly bounded demo repair workf
 - The broker uses a separate ServiceAccount restricted with `resourceNames` to five disposable objects in `kravel-demo`.
 - The broker accepts no arbitrary command or arbitrary patch.
 - Every proposal must pass Kubernetes server-side dry-run and expire after five minutes without a human decision.
+- The reviewed plan and resource identity/spec are checked again before execution. Resets or edits invalidate the proposal, and version preconditions reject concurrent changes. Each approval/execution is claimed atomically; interrupted executions are never replayed automatically.
+- Read tools stay inside the operator-selected investigation namespace; the model cannot switch namespaces. Cluster-wide Node and Namespace inspection remains read-only.
 - The approval token is not mounted into the debugger and is removed from the Local Slack address bar after page load.
 - Port-forwards bind to `127.0.0.1`; no inbound internet endpoint is needed.
 - Slack tokens, when used, come from environment variables and a Kubernetes Secret. They are never embedded in manifests or source.
@@ -21,6 +23,7 @@ Kravel is intentionally a debugger first and a tightly bounded demo repair workf
 - Kubernetes RBAC is the ultimate control boundary. Review `deploy/local.yaml` before adapting Kravel to a real cluster.
 - The bundled repair catalog is for the disposable `kravel-demo` namespace. Do not widen its namespace, resource names, or verbs without a separate security review.
 - Local Slack is a demo of the approval workflow, not a replacement for enterprise identity, retention, or separation-of-duties controls.
+- Multi-object fixes are not transactions. If a later operation fails, the audit records any earlier applied operation; inspect the result and prepare a new review instead of automatically retrying.
 - Anonymous Grafana access is convenient for localhost only. Do not expose this manifest directly outside the laptop.
 - MLflow and audit outputs avoid raw prompts and evidence by design, but operational metadata can still be sensitive.
 

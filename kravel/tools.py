@@ -21,6 +21,8 @@ def enforce_read_scope(name: str, args: dict, default_namespace: str) -> dict:
     if name not in {item["function"]["name"] for item in READ_ONLY_TOOLS}:
         raise ValueError("Unknown read-only tool")
     scoped["namespace"] = str(scoped.get("namespace") or default_namespace)
+    if scoped["namespace"] != default_namespace:
+        raise ValueError("Tool namespace must match the selected investigation namespace")
     if scoped["namespace"] in {"*", "all", "all-namespaces"}:
         raise ValueError("Explicit namespace required; cross-namespace list calls are disabled")
     if name in {"get_resource", "describe_resource", "list_resources"}:
@@ -53,9 +55,9 @@ def execute_read_tool(name: str, args: dict, kube):
     raise ValueError("Unknown read-only tool")
 
 
-def _container_issue(pod: dict):
+def _container_issue(pod: dict, namespace: str = "kravel-demo"):
     app = pod.get("metadata", {}).get("labels", {}).get("app", "")
-    known_fix = {"oom-demo": "fix_oom_memory", "image-demo": "fix_image_pull", "crash-demo": "fix_crash_loop"}
+    is_demo = namespace == "kravel-demo"
     statuses = pod.get("status", {}).get("containerStatuses", [])
     for status in statuses:
         last = status.get("lastState", {}).get("terminated", {})
@@ -63,26 +65,26 @@ def _container_issue(pod: dict):
         waiting = current.get("waiting", {})
         terminated = current.get("terminated", {})
         if last.get("reason") == "OOMKilled" or terminated.get("reason") == "OOMKilled":
-            return "oomkilled", known_fix.get(app, ""), f"container {status.get('name')} terminated with OOMKilled"
+            return "oomkilled", "fix_oom_memory" if is_demo and app == "oom-demo" else "", f"container {status.get('name')} terminated with OOMKilled"
         reason = waiting.get("reason", "")
         if reason in {"ImagePullBackOff", "ErrImagePull", "InvalidImageName"}:
-            return "imagepullbackoff", known_fix.get(app, ""), f"container {status.get('name')} is waiting: {reason}"
+            return "imagepullbackoff", "fix_image_pull" if is_demo and app == "image-demo" else "", f"container {status.get('name')} is waiting: {reason}"
         prior_exit = int(last.get("exitCode", 0) or 0)
-        if app != "config-demo" and (reason == "CrashLoopBackOff" or prior_exit != 0 and int(status.get("restartCount", 0) or 0) > 0):
+        if not (is_demo and app == "config-demo") and (reason == "CrashLoopBackOff" or prior_exit != 0 and int(status.get("restartCount", 0) or 0) > 0):
             evidence = "is waiting: CrashLoopBackOff" if reason == "CrashLoopBackOff" else f"restarted after exit code {prior_exit}"
-            return "crashloopbackoff", known_fix.get(app, ""), f"container {status.get('name')} {evidence}"
+            return "crashloopbackoff", "fix_crash_loop" if is_demo and app == "crash-demo" else "", f"container {status.get('name')} {evidence}"
     return "", "", ""
 
 
 def discover_issues(kube, namespace: str) -> dict:
     started = time.perf_counter()
-    pods = kube.list_resources("pods", namespace, limit=200)["items"]
+    pods = [pod for pod in kube.list_resources("pods", namespace, limit=200)["items"] if not pod.get("metadata", {}).get("deletionTimestamp")]
     deployments = kube.list_resources("deployments", namespace, limit=100)["items"]
     configmaps = kube.list_resources("configmaps", namespace, limit=100)["items"]
     services = kube.list_resources("services", namespace, limit=100)["items"]
     issues = []
     for pod in pods:
-        issue_type, fix_id, evidence = _container_issue(pod)
+        issue_type, fix_id, evidence = _container_issue(pod, namespace)
         if not issue_type:
             continue
         name = pod.get("metadata", {}).get("name", "")
@@ -101,7 +103,7 @@ def discover_issues(kube, namespace: str) -> dict:
         mode = config.get("data", {}).get("MODE", "")
         if mode != "healthy":
             config_broken = True
-            issues.append({"id": "bad_configmap:config-demo", "type": "bad_configmap", "title": "Bad ConfigMap", "severity": "warning", "resource": "ConfigMap/config-demo", "evidence": f"data.MODE is {mode!r}; expected 'healthy'", "fixId": "fix_bad_configmap"})
+            issues.append({"id": "bad_configmap:config-demo", "type": "bad_configmap", "title": "Bad ConfigMap", "severity": "warning", "resource": "ConfigMap/config-demo", "evidence": f"data.MODE is {mode!r}; expected 'healthy'", "fixId": "fix_bad_configmap" if namespace == "kravel-demo" else ""})
     except Exception:
         pass
 

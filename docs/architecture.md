@@ -44,10 +44,12 @@ Each agent investigation creates an MLflow root span with nested spans for:
 - input guardrail;
 - each Qwen inference turn;
 - each read-only Kubernetes tool call;
+- a separate guardrail scan of each tool result before it reaches Qwen;
 - output guardrail;
 - deterministic current-issue discovery.
 
 Prometheus also exposes end-to-end, Qwen, tool, guardrail, MLflow setup, span-overhead, and trace-flush timing. Approval status, age, approved fixes, and audited actions come from the broker.
+Repetitive API bookkeeping is removed only from model evidence, and the conversation is bounded for the local 12K-context model. Full read-only tool responses remain available in the UI; truncation is explicitly marked.
 
 ## State and reset
 
