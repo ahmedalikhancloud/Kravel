@@ -53,6 +53,7 @@ test("local scripts bind browser ports to loopback and contain no committed cred
   assert.match(scripts, /Get-AuthenticodeSignature/);
   assert.match(scripts, /O=Docker Inc/);
   assert.match(scripts, /com\.docker\.nv-gpu-info\.exe/);
+  assert.match(scripts, /docker desktop restart/);
   assert.doesNotMatch(scripts, /gsk_[A-Za-z0-9_-]{16,}|BEGIN PRIVATE KEY/i);
 
   for (const name of ["prepare", "demo", "run-pipeline", "reset"]) {

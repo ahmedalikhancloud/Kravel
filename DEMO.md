@@ -224,7 +224,15 @@ Do not change the machine-wide execution policy to `Unrestricted` for this demo.
 
 Verify the NVIDIA driver, run `wsl --update`, restart Docker Desktop, and confirm GPU-backed inference is enabled. Your local Qwen run may otherwise be slow or unavailable.
 
-If `docker model status` specifically reports that `com.docker.nv-gpu-info.exe` is missing, you have encountered a Docker Desktop Windows provisioning regression. `prepare.cmd` checks for this condition and copies only Docker Desktop's bundled helper after verifying its Authenticode signature identifies Docker Inc. It never downloads or substitutes an executable from another source. If Docker's bundled helper is also absent, repair or reinstall Docker Desktop.
+If `docker model status` specifically reports that `com.docker.nv-gpu-info.exe` is missing, you have encountered a Docker Desktop Windows provisioning regression. `prepare.cmd` checks for this condition and copies only Docker Desktop's bundled helper after verifying its Authenticode signature identifies Docker Inc. It never downloads or substitutes an executable from another source. After the first repair, restart Docker Desktop once and rerun preparation:
+
+```powershell
+docker desktop restart
+docker desktop status
+.\demo\local\prepare.cmd
+```
+
+If Docker's bundled helper is also absent, repair or reinstall Docker Desktop.
 
 ### `ErrImageNeverPull` for `kravel:local` or `kravel-laya:local`
 

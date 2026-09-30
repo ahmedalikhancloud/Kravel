@@ -34,12 +34,12 @@ function Invoke-KravelNativeWithRetry {
 }
 
 function Repair-KravelDockerGpuHelper {
-  if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return }
+  if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return $false }
   $targetDirectory = Join-Path $env:USERPROFILE ".docker\bin\inference"
   $target = Join-Path $targetDirectory "com.docker.nv-gpu-info.exe"
   if (Test-Path -LiteralPath $target) {
     $targetSignature = Get-AuthenticodeSignature -LiteralPath $target
-    if ($targetSignature.Status -eq "Valid" -and $targetSignature.SignerCertificate.Subject -match "O=Docker Inc") { return }
+    if ($targetSignature.Status -eq "Valid" -and $targetSignature.SignerCertificate.Subject -match "O=Docker Inc") { return $false }
     throw "Docker's installed GPU helper failed signature validation: $target"
   }
 
@@ -48,7 +48,7 @@ function Repair-KravelDockerGpuHelper {
   $source = Join-Path $resourcesDirectory "model-runner\bin\com.docker.nv-gpu-info.exe"
   if (-not (Test-Path -LiteralPath $source)) {
     Write-Warning "Docker's GPU helper is missing from both its runtime and installation directories. Reinstall or repair Docker Desktop."
-    return
+    return $false
   }
 
   $signature = Get-AuthenticodeSignature -LiteralPath $source
@@ -59,6 +59,7 @@ function Repair-KravelDockerGpuHelper {
   New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null
   Copy-Item -LiteralPath $source -Destination $target -Force
   Write-Warning "Applied the Docker Desktop GPU-helper provisioning workaround using Docker's verified bundled executable."
+  return $true
 }
 
 function Assert-KravelPrerequisites {
@@ -103,7 +104,10 @@ function Select-KravelDesktopModelRunner {
     Invoke-KravelNative "docker" @("model", "context", "use", $contextName)
   }
 
-  Repair-KravelDockerGpuHelper
+  $gpuHelperRepaired = Repair-KravelDockerGpuHelper
+  if ($gpuHelperRepaired) {
+    throw "Docker's signed GPU helper was repaired. Restart Docker Desktop once with 'docker desktop restart', wait for it to report running, and then run prepare.cmd again."
+  }
   try {
     Invoke-KravelNative "docker" @("model", "status")
   } catch {
