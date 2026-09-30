@@ -48,6 +48,8 @@ test("local scripts bind browser ports to loopback and contain no committed cred
   assert.match(scripts, /docker-desktop/);
   assert.match(scripts, /model context.*kravel-desktop|contextName = "kravel-desktop"/s);
   assert.match(scripts, /http:\/\/127\.0\.0\.1:12434/);
+  assert.match(scripts, /Invoke-KravelNativeWithRetry/);
+  assert.match(scripts, /Attempts = 4/);
   assert.doesNotMatch(scripts, /gsk_[A-Za-z0-9_-]{16,}|BEGIN PRIVATE KEY/i);
 
   for (const name of ["prepare", "demo", "run-pipeline", "reset"]) {

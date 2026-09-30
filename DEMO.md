@@ -90,6 +90,8 @@ This command:
 
 The first run can take several minutes and needs multiple gigabytes of disk space. Do not leave this step until the presentation begins.
 
+Container and model downloads retry automatically because Docker registry CDN connections can occasionally close mid-layer. Rerunning `prepare.cmd` is safe: Docker reuses completed layers, the built images, and the downloaded Qwen model.
+
 ## Run the main escalation demo
 
 ```powershell
@@ -256,6 +258,16 @@ Run the pipeline at least once, wait a few seconds for Prometheus, then refresh 
 ```powershell
 .\demo\local\run-pipeline.cmd
 ```
+
+### An image pull ends with `EOF`
+
+This is normally a transient registry/CDN connection failure. Run preparation again:
+
+```powershell
+.\demo\local\prepare.cmd
+```
+
+Completed layers, the Qwen model, and successfully built images are retained. The preparation script retries registry pulls automatically.
 
 ### Port 3000 or 5000 is already used
 

@@ -10,7 +10,7 @@ Write-Host "`n==> Verifying Docker Model Runner"
 Select-KravelDesktopModelRunner
 
 Write-Host "`n==> Downloading and configuring the local Qwen reasoning model"
-Invoke-KravelNative "docker" @("model", "pull", $qwenModel)
+Invoke-KravelNativeWithRetry "docker" @("model", "pull", $qwenModel)
 Invoke-KravelNative "docker" @("model", "configure", "--context-size", "4096", $qwenModel)
 Invoke-KravelNative "docker" @("model", "run", "--detach", $qwenModel)
 
@@ -20,7 +20,7 @@ Invoke-KravelNative "docker" @("build", "--tag", "kravel-laya:local", "--file", 
 
 Write-Host "`n==> Caching the synthetic workload and observability images"
 foreach ($image in @("busybox:1.36", "prom/prometheus:v3.13.3", "grafana/grafana:13.1.6", "ghcr.io/mlflow/mlflow:v3.14.0")) {
-  Invoke-KravelNative "docker" @("pull", $image)
+  Invoke-KravelNativeWithRetry "docker" @("pull", $image)
 }
 
 Write-Host "`n==> Starting Laya and downloading its English checkpoint into a persistent local volume"

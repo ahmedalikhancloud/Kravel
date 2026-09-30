@@ -15,6 +15,24 @@ function Invoke-KravelNative {
   }
 }
 
+function Invoke-KravelNativeWithRetry {
+  param(
+    [Parameter(Mandatory = $true)][string]$Command,
+    [Parameter(Mandatory = $true)][string[]]$Arguments,
+    [ValidateRange(1, 10)][int]$Attempts = 4
+  )
+  for ($attempt = 1; $attempt -le $Attempts; $attempt += 1) {
+    & $Command @Arguments
+    if ($LASTEXITCODE -eq 0) { return }
+    if ($attempt -eq $Attempts) {
+      throw "Command failed after $Attempts attempts: $Command $($Arguments -join ' ')"
+    }
+    $delaySeconds = [Math]::Min([Math]::Pow(2, $attempt), 10)
+    Write-Warning "Command failed on attempt $attempt of $Attempts. Retrying in $delaySeconds seconds: $Command $($Arguments -join ' ')"
+    Start-Sleep -Seconds $delaySeconds
+  }
+}
+
 function Assert-KravelPrerequisites {
   foreach ($name in @("docker", "kubectl")) {
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
