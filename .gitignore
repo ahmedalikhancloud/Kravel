@@ -5,4 +5,10 @@ data/
 .env
 node_modules/
 coverage/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
 .kravel-local-state.json
+.kravel-local-state.env

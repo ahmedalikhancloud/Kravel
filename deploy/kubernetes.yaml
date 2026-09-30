@@ -86,7 +86,7 @@ spec:
         - name: kravel
           image: ghcr.io/YOUR_ORG/kravel:0.1.0
           imagePullPolicy: IfNotPresent
-          args: ["node", "src/main.mjs", "serve-watch"]
+          args: ["python", "-m", "kravel.main", "serve-watch"]
           env:
             - name: KRAVEL_HOST
               value: 0.0.0.0

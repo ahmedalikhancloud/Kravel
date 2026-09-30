@@ -46,6 +46,17 @@ subjects:
     name: kravel
     namespace: kravel-system
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kravel-data
+  namespace: kravel-system
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -75,7 +86,7 @@ spec:
         - name: kravel
           image: kravel:local
           imagePullPolicy: Never
-          args: ["node", "src/main.mjs", "serve-watch"]
+          args: ["python", "-m", "kravel.main", "serve-watch"]
           env:
             - name: KRAVEL_HOST
               value: 0.0.0.0
@@ -92,11 +103,13 @@ spec:
             - name: KRAVEL_LLM_BASE_URL
               value: http://model-runner.docker.internal/engines/v1
             - name: KRAVEL_LLM_MODEL
-              value: ai/qwen3:4b-thinking-2507-q4_K_M
+              value: ai/qwen3:4b-instruct-2507-q4_K_M
             - name: KRAVEL_LLM_MAX_TURNS
-              value: "6"
+              value: "3"
             - name: KRAVEL_LLM_REASONING_BUDGET
-              value: "384"
+              value: "0"
+            - name: KRAVEL_LLM_TIMEOUT_SECONDS
+              value: "90"
             - name: KRAVEL_MLFLOW_URL
               value: http://kravel-mlflow.kravel-observability.svc.cluster.local:5000
           ports:
@@ -115,10 +128,10 @@ spec:
           resources:
             requests:
               cpu: 50m
-              memory: 64Mi
+              memory: 160Mi
             limits:
               cpu: "1"
-              memory: 512Mi
+              memory: 768Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -131,7 +144,8 @@ spec:
               mountPath: /tmp
       volumes:
         - name: data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: kravel-data
         - name: tmp
           emptyDir: {}
 ---

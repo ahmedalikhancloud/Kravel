@@ -205,11 +205,11 @@ data:
         },
         {
           "type": "stat",
-          "title": "MLflow logging overhead",
+          "title": "MLflow tracing + durable flush",
           "id": 9,
           "gridPos": {"h": 5, "w": 6, "x": 18, "y": 24},
           "datasource": {"type": "prometheus", "uid": "prometheus"},
-          "targets": [{"expr": "kravel_pipeline_stage_latency_seconds{stage=\"mlflow_logging\"}", "refId": "A"}],
+          "targets": [{"expr": "sum(kravel_pipeline_stage_latency_seconds{stage=~\"mlflow_setup|mlflow_tracing_overhead|mlflow_trace_flush\"})", "refId": "A"}],
           "fieldConfig": {"defaults": {"unit": "s", "decimals": 4}, "overrides": []},
           "options": {"reduceOptions": {"calcs": ["lastNotNull"], "values": false}}
         },

@@ -1,308 +1,190 @@
 # Fully local Kravel demo
 
-This is the supported presentation path. Kubernetes, Laya, Qwen, Kravel, Prometheus, Grafana, and MLflow all run on your laptop. There are no API keys or public URLs.
+This path keeps Kubernetes, Laya, Qwen, Kravel, Prometheus, Grafana, and MLflow on your laptop. There are no API keys or public URLs.
 
-## What the demo shows
+## One-time setup
 
-1. Kravel watches a healthy cluster and records a known-good baseline.
-2. The script introduces realistic Kubernetes failures.
-3. Kravel reconstructs the incident window from historical state and Events.
-4. An input guardrail checks the evidence before Laya sees it.
-5. Laya classifies the incident cheaply.
-6. An output guardrail validates Laya's probabilities.
-7. A policy gate chooses a predefined runbook or escalates to Qwen.
-8. Qwen receives separately guarded input, calls read-only temporal tools, and produces a guarded investigation.
-9. The routine path executes deterministic read-only checks; either path generates a remediation proposal that remains pending human approval.
-10. Grafana and MLflow show the latency added by every stage.
+1. Install current NVIDIA drivers and reboot.
+2. Enable virtualization in your firmware.
+3. Install/update WSL 2.
+4. Install Docker Desktop and enable Linux containers, the WSL 2 engine, Kubernetes with the `kubeadm` provisioner, Docker Model Runner, GPU-backed inference, and localhost Model Runner TCP access on port `12434`.
+5. Give Docker Desktop at least 8 GB of memory. Laya can approach 4 GB while loading.
+6. Install [Git for Windows](https://git-scm.com/download/win), which includes Git Bash.
 
-## One-time laptop setup
+Verify from Git Bash:
 
-### 1. Update the NVIDIA driver
-
-Docker Model Runner currently requires NVIDIA driver `576.57` or newer on Windows. Install a current driver from NVIDIA, reboot, then verify:
-
-```powershell
-nvidia-smi
-```
-
-### 2. Install WSL 2
-
-Open PowerShell as Administrator:
-
-```powershell
-wsl --install
-```
-
-Reboot when Windows asks. Then update WSL:
-
-```powershell
-wsl --update
-wsl --status
-```
-
-### 3. Install and configure Docker Desktop
-
-Install the latest [Docker Desktop for Windows](https://docs.docker.com/desktop/setup/install/windows-install/). In Docker Desktop:
-
-1. Use Linux containers.
-2. Open **Settings → General** and enable the WSL 2 engine.
-3. Leave **Use containerd for pulling and storing images** enabled.
-4. Open **Kubernetes** and create a one-node cluster using the `kubeadm` provisioner. The local manifests use `imagePullPolicy: Never`, and this provisioner is the least surprising path for locally built images.
-5. Open **Settings → AI** and enable Docker Model Runner.
-6. Enable GPU-backed inference.
-7. Enable host-side TCP support on its default port, `12434`. Docker Desktop binds this endpoint to localhost; do not expose it through a LAN proxy or firewall rule. Kubernetes still reaches the runner through Docker's internal network.
-
-Verify the cluster:
-
-```powershell
+```bash
+docker info
 kubectl config use-context docker-desktop
 kubectl get nodes
 docker model status
 ```
 
-The scripts deliberately refuse to operate against any Kubernetes context other than `docker-desktop`.
+The scripts refuse to modify any Kubernetes context except `docker-desktop`.
 
-### 4. Clone Kravel
+## Prepare before presentation day
 
-```powershell
-git clone https://github.com/ahmedalikhancloud/Kravel.git
-cd Kravel
+In Git Bash, from the repository root:
+
+```bash
+bash demo/local/prepare.sh
 ```
 
-## Prepare everything before presentation day
+This downloads the fast `ai/qwen3:4b-instruct-2507-q4_K_M` profile, builds Python Kravel and Laya, caches all container images, loads Laya's English checkpoint, starts the observability stack, and checks that a Kravel Pod can reach Qwen.
 
-Run once while you have a reliable internet connection:
+The first run can take several minutes and multiple gigabytes. Rerunning it is safe and reuses cached layers/models.
 
-```powershell
-.\demo\local\prepare.cmd
+## Main demo
+
+```bash
+bash demo/local/demo.sh --scenario escalation
 ```
 
-This command:
+The scenario creates four common production failures:
 
-- downloads `ai/qwen3:4b-thinking-2507-q4_K_M`;
-- configures an 8,192-token context window and a bounded per-request reasoning budget;
-- builds the local Kravel image;
-- builds the CPU-only Laya image;
-- downloads Laya's English checkpoint into a persistent Kubernetes volume;
-- pulls the workload and observability images;
-- starts every component once;
-- confirms a Kravel Pod can reach Docker Model Runner.
+1. a ConfigMap regression followed by `CrashLoopBackOff`;
+2. Service selector drift that silently removes all endpoints;
+3. a rollout using a nonexistent image;
+4. an impossible node selector causing `FailedScheduling`.
 
-The first run can take several minutes and needs multiple gigabytes of disk space. Do not leave this step until the presentation begins.
+The terminal first prints the deterministic time-travel diff and ordered timeline. It then runs the guarded LangGraph pipeline and prints Laya probabilities, the policy route, every stage latency, Qwen's evidence-grounded report when escalated, and the human-review proposal.
 
-Laya's English checkpoint can approach 4 GiB while loading in the CPU/PyTorch server. The local manifest gives it a 4.5 GiB limit, so Docker Desktop should have an 8 GB memory budget (shown as roughly 7.5 GiB or more under `Total Memory` in `docker info`) before preparation.
+For a smaller incident:
 
-Container and model downloads retry automatically because Docker registry CDN connections can occasionally close mid-layer. Rerunning `prepare.cmd` is safe: Docker reuses completed layers, the built images, and the downloaded Qwen model.
-
-## Run the main escalation demo
-
-```powershell
-.\demo\local\demo.cmd -Scenario escalation
+```bash
+bash demo/local/demo.sh --scenario routine
 ```
 
-The script creates four failures:
+If Laya clears the confidence and margin thresholds, this uses the predefined read-only runbook. Low confidence still escalates safely.
 
-- a ConfigMap regression followed by `CrashLoopBackOff`;
-- Service selector drift that silently removes all backends;
-- a rollout referencing a nonexistent image;
-- an impossible node selector causing `FailedScheduling`.
+## Dashboards
 
-Multiple independent failures and severe classes should make the policy gate escalate to Qwen. The terminal prints:
-
-- Laya's classification and policy reasons;
-- each stage latency;
-- every temporal tool selected by Qwen;
-- the guarded Qwen report;
-- a dry-run remediation proposal marked `awaiting_human_review` and `remediationExecuted: false`.
-
-The exact route is determined by the real local Laya output. If confidence is unexpectedly low or multiple classes cross the positive threshold, escalation is the intended safe behavior.
-
-## Show the routine path
-
-To demonstrate a smaller, potentially high-confidence incident:
-
-```powershell
-.\demo\local\demo.cmd -Scenario routine
-```
-
-This creates only the ConfigMap regression. If Laya meets the configured confidence and margin thresholds, the policy selects `predefined_runbook`; otherwise it safely escalates to Qwen. Neither route mutates the cluster during remediation.
-
-## Open the dashboards
-
-The demo script creates localhost-only port forwards:
+The demo creates localhost-only port forwards:
 
 - Grafana: [http://localhost:3000](http://localhost:3000)
 - MLflow: [http://localhost:5000](http://localhost:5000)
 
-Grafana's **Kravel Local Incident Pipeline** dashboard shows:
+In MLflow, choose the **Kravel Local Incident Traces** experiment and open **Traces**. A pipeline execution is one trace; expanding it shows the parent/child waterfall for reconstruction, input/output guardrails, Laya, routing, temporal tools, Qwen, and human review.
 
-- observed end-to-end latency;
-- Laya and Qwen inference latency;
-- all four guardrail timings;
-- evidence, policy, temporal-tool, proposal, and MLflow timing;
-- Laya probabilities;
-- Qwen tool-call count;
-- aggregate p95 stage latency after repeated runs.
+Grafana shows current and aggregate stage latency. Run the same captured window several times for a warm-model sample:
 
-MLflow's **Kravel Local Incident Pipeline** experiment contains one parent run per pipeline execution and one child run per measured stage. MLflow stores numeric timing and bounded labels only; it does not store cluster evidence, prompts, reports, endpoints, or credentials.
-
-The `mlflow_logging` measurement covers the MLflow requests completed before that measurement is written. The final metric-write request cannot measure itself, so it is intentionally excluded.
-
-## Build a better latency sample
-
-Reuse the same recorded incident window without breaking the cluster again:
-
-```powershell
-.\demo\local\run-pipeline.cmd -Runs 3
+```bash
+bash demo/local/run-pipeline.sh --runs 3
 ```
 
-This is useful for showing warm-model latency and building Grafana's p95 charts. The first Qwen request after an idle period may be slower because the model is loaded on demand.
+## Why Qwen is faster now
+
+The default uses Qwen3 4B **Instruct**, a 4,096-token context, no hidden-reasoning budget, bounded 3.5 KB tool evidence, and a 520-token ceiling for a requested 180-word report. LangGraph deterministically gathers the two safest useful temporal tools first, so Qwen needs one synthesis request instead of a planning request plus a report request.
+
+To deliberately compare against the slower Thinking profile:
+
+```bash
+KRAVEL_QWEN_PROFILE=thinking bash demo/local/prepare.sh
+KRAVEL_QWEN_PROFILE=thinking bash demo/local/demo.sh --scenario escalation
+```
+
+Return to the fast profile by rerunning both commands without that environment variable.
+
+## Using the `.cmd` launchers
+
+From PowerShell or Command Prompt you may run:
+
+```text
+demo\local\prepare.cmd
+demo\local\demo.cmd --scenario escalation
+demo\local\run-pipeline.cmd --runs 3
+demo\local\reset.cmd
+```
+
+They locate Git Bash and invoke the same `.sh` scripts. They do not execute PowerShell scripts, so PowerShell's script execution policy is irrelevant.
 
 ## Presentation sequence
 
-A compact narration is:
-
-1. Show the healthy Pods.
-2. Run `demo.cmd` and explain each injected failure.
-3. Point out Laya's fast classification.
-4. Explain the policy decision and why severe or ambiguous evidence escalates.
-5. Show Qwen choosing time-travel tools instead of receiving unrestricted cluster access.
-6. Show the routine branch's read-only automation evidence, then the proposal's `remediationExecuted: false` and `awaiting_human_review` fields.
-7. Open Grafana for the stage-latency view.
-8. Open MLflow and expand one run to show the individual guardrail and inference stages.
+1. Show healthy Pods with `kubectl get pods -A`.
+2. Run the escalation demo and narrate each injected mutation.
+3. Point to the deterministic reconstruction before any model output.
+4. Show Laya's quick classification and the policy decision.
+5. Explain that LangGraph fixes the cluster/namespace scope and executes only read-only temporal tools.
+6. Show `awaiting_human_review` and `remediationExecuted: false`.
+7. Open Grafana for stage timings.
+8. Open MLflow **Traces** and expand the span waterfall.
 
 ## Cleanup
 
-Remove disposable workloads, Kravel history, dashboards, and port forwards while retaining downloaded models:
+Keep downloaded models and images:
 
-```powershell
-.\demo\local\reset.cmd
+```bash
+bash demo/local/reset.sh
 ```
 
-To also remove Laya and its persistent checkpoint cache:
+Also delete Laya and its cached checkpoint:
 
-```powershell
-.\demo\local\reset.cmd -Full
+```bash
+bash demo/local/reset.sh --full
 ```
-
-The Qwen model and Docker images remain cached. Remove those separately through Docker Desktop only if you intentionally want to reclaim disk space.
 
 ## Troubleshooting
 
-### `docker model` is not recognized
+### `docker`, `kubectl`, or `git` is not recognized
 
-Update Docker Desktop and enable Docker Model Runner under **Settings → AI**.
+Open **Git Bash**, not a stale PowerShell window. If the `.cmd` wrapper cannot find Git Bash, reinstall Git for Windows with its default components.
 
-### `docker model status` says port 12434 is already in use
+### Docker Model Runner says port 12434 is already in use
 
-Docker Desktop's runner may already be healthy while the model CLI incorrectly auto-detects the standalone Docker Engine runner. Confirm the Desktop endpoint first:
+Docker Desktop's runner may already be healthy. Test it in Git Bash:
 
-```powershell
-Invoke-WebRequest http://127.0.0.1:12434/engines/v1/models
-```
-
-If it returns HTTP 200, select it explicitly:
-
-```powershell
+```bash
+curl -fsS http://127.0.0.1:12434/engines/v1/models
 docker model context create kravel-desktop --host http://127.0.0.1:12434 --description "Kravel localhost-only Docker Desktop Model Runner"
 docker model context use kravel-desktop
 docker model status
 ```
 
-If `kravel-desktop` already exists, skip the `create` command. `prepare.cmd` now performs this detection and setup automatically. Do not disable Docker Desktop Model Runner; Kravel uses that instance.
+Skip the `create` command if the context already exists. Do not expose this unauthenticated endpoint to your LAN.
 
-### PowerShell says running scripts is disabled
+### Laya is `OOMKilled`
 
-Use the supplied `.cmd` launchers. They apply `ExecutionPolicy Bypass` only to the child PowerShell process and do not change your user or machine policy:
+Confirm Docker Desktop has at least 8 GB available, then restart it and rerun preparation:
 
-```powershell
-.\demo\local\prepare.cmd
-.\demo\local\demo.cmd -Scenario escalation
+```bash
+kubectl -n kravel-ai describe pods -l app=kravel-laya
+kubectl -n kravel-ai logs deployment/kravel-laya --previous
+bash demo/local/prepare.sh
 ```
-
-Do not change the machine-wide execution policy to `Unrestricted` for this demo.
-
-### GPU-backed inference is unavailable
-
-Verify the NVIDIA driver, run `wsl --update`, restart Docker Desktop, and confirm GPU-backed inference is enabled. Your local Qwen run may otherwise be slow or unavailable.
-
-If `docker model status` specifically reports that `com.docker.nv-gpu-info.exe` is missing, you have encountered a Docker Desktop Windows provisioning regression. `prepare.cmd` checks for this condition and copies only Docker Desktop's bundled helper after verifying its Authenticode signature identifies Docker Inc. It never downloads or substitutes an executable from another source. After the first repair, restart Docker Desktop once and rerun preparation:
-
-```powershell
-docker desktop restart
-docker desktop status
-.\demo\local\prepare.cmd
-```
-
-If Docker's bundled helper is also absent, repair or reinstall Docker Desktop.
-
-### `ErrImageNeverPull` for `kravel:local` or `kravel-laya:local`
-
-Confirm Docker Desktop Kubernetes uses the `kubeadm` provisioner, the containerd image store is enabled, and `prepare.cmd` completed successfully. Then rebuild:
-
-```powershell
-.\demo\local\prepare.cmd
-```
-
-### Laya startup takes several minutes
-
-The first startup downloads and loads its checkpoint. Inspect it with:
-
-```powershell
-kubectl -n kravel-ai logs deployment/kravel-laya
-kubectl -n kravel-ai get pods,pvc
-```
-
-Later starts reuse `laya-model-cache` unless you run `reset.cmd -Full` or reset Docker Desktop's Kubernetes cluster.
-
-If `kubectl describe pod` says `Last State: OOMKilled`, confirm you have pulled this repository's latest changes: older versions capped Laya below its observed loading peak. Reapply the corrected 4.5 GiB limit by rerunning:
-
-```powershell
-git pull
-.\demo\local\prepare.cmd
-```
-
-If the Pod is still OOM-killed, increase the memory budget available to Docker Desktop/WSL to at least 8 GB, restart Docker Desktop, and rerun preparation. The script automatically prints the Pod description and previous-container logs when a Laya rollout fails.
-
-### Grafana or MLflow does not become ready
-
-The local profile disables Grafana's optional plugin downloads. It also runs MLflow with one web worker and disables MLflow's unused background job-execution workers, keeping the single-user demo inside an 8 GB Docker budget. If an observability rollout still fails, `prepare.cmd` automatically prints that Pod's termination reason and logs. Check for `OOMKilled`, then confirm `docker info` reports roughly 7.5 GiB or more under `Total Memory`.
 
 ### Kravel cannot reach Qwen
 
-```powershell
-kubectl -n kravel-system exec deployment/kravel -- node -e "fetch('http://model-runner.docker.internal/engines/v1/models').then(r=>console.log(r.status)).catch(console.error)"
+```bash
+kubectl -n kravel-system exec deployment/kravel -- python -m kravel.cli check-llm
 ```
 
-If it fails, verify Docker Model Runner is enabled and restart Docker Desktop. Do not expose the Model Runner API to your LAN as a workaround.
+Confirm Model Runner and host-side TCP support are enabled, then restart Docker Desktop.
 
-### The dashboard is empty
+### Grafana or MLflow is not ready
 
-Run the pipeline at least once, wait a few seconds for Prometheus, then refresh Grafana:
-
-```powershell
-.\demo\local\run-pipeline.cmd
+```bash
+kubectl -n kravel-observability get pods
+kubectl -n kravel-observability logs deployment/kravel-grafana
+kubectl -n kravel-observability logs deployment/kravel-mlflow
 ```
 
-### An image pull ends with `EOF`
+### Dashboard is empty
 
-This is normally a transient registry/CDN connection failure. Run preparation again:
+Run at least one pipeline, wait a few seconds for Prometheus, and refresh:
 
-```powershell
-.\demo\local\prepare.cmd
+```bash
+bash demo/local/run-pipeline.sh
 ```
 
-Completed layers, the Qwen model, and successfully built images are retained. The preparation script retries registry pulls automatically.
+### Port 3000 or 5000 is occupied
 
-### Port 3000 or 5000 is already used
-
-Stop the conflicting local service or edit the local ports in `demo/local/demo.ps1`. The port forwards intentionally bind only to `127.0.0.1`.
+Stop the conflicting local service, run `bash demo/local/reset.sh`, and retry. Port forwards bind only to `127.0.0.1`.
 
 ## Safety boundaries
 
-- Run only the included synthetic scenarios.
-- The Kubernetes role is read-only.
+- Run only the included synthetic namespaces.
+- Kravel's Kubernetes role is read-only.
 - Model and dashboard endpoints are not published externally.
-- Docker Model Runner's API has no authentication, so external TCP access stays disabled.
-- Guardrails are deterministic filters and validators, not proof that model output is safe or correct.
+- Raw evidence, prompts, reports, URLs, and secrets are excluded from MLflow trace payloads and Prometheus labels.
+- Guardrails are deterministic filters/validators, not proof of model safety.
 - No remediation command is executed; a human remains the approval boundary.

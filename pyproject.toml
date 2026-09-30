@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kravel"
+version = "0.2.0"
+description = "Time-travel memory and a guarded LangGraph incident agent for Kubernetes"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+dependencies = [
+  "langgraph==1.2.12",
+  "mlflow-tracing==3.14.0",
+  "openai==3.22.1",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.0.2"]
+
+[project.scripts]
+kravel = "kravel.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["kravel*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider"
