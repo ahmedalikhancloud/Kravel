@@ -33,6 +33,39 @@ function Invoke-KravelNativeWithRetry {
   }
 }
 
+function Show-KravelLayaDiagnostics {
+  Write-Warning "Laya did not become ready. Collecting diagnostics before preparation stops."
+  & kubectl -n kravel-ai get pods,pvc -o wide
+
+  $podJson = & kubectl -n kravel-ai get pods -l app=kravel-laya -o json 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $podJson) { return }
+
+  try {
+    $pods = ($podJson | Out-String | ConvertFrom-Json).items
+    $pod = $pods | Sort-Object { $_.metadata.creationTimestamp } -Descending | Select-Object -First 1
+    if (-not $pod) { return }
+
+    $podName = $pod.metadata.name
+    $status = $pod.status.containerStatuses | Where-Object { $_.name -eq "laya" } | Select-Object -First 1
+    $termination = $null
+    if ($status -and $status.lastState -and $status.lastState.PSObject.Properties.Name -contains "terminated") {
+      $termination = $status.lastState.terminated
+    }
+    if ($termination -and $termination.reason -eq "OOMKilled") {
+      Write-Warning "Laya was OOMKilled. The deployment now allows a 4 GiB peak; make sure Docker Desktop has an 8 GB budget (about 7.5 GiB in docker info)."
+    }
+
+    Write-Host "`n--- Laya Pod description ($podName) ---"
+    & kubectl -n kravel-ai describe pod $podName
+    Write-Host "`n--- Laya previous-container logs ($podName) ---"
+    & kubectl -n kravel-ai logs $podName --previous --tail=200
+    Write-Host "`n--- Laya current-container logs ($podName) ---"
+    & kubectl -n kravel-ai logs $podName --tail=200
+  } catch {
+    Write-Warning "Could not collect every Laya diagnostic: $($_.Exception.Message)"
+  }
+}
+
 function Repair-KravelDockerGpuHelper {
   if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { return $false }
   $targetDirectory = Join-Path $env:USERPROFILE ".docker\bin\inference"

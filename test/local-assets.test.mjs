@@ -17,6 +17,8 @@ test("Laya is CPU-only, private to the cluster, and uses a persistent model cach
   assert.match(manifest, /value: cpu/);
   assert.match(manifest, /kind: PersistentVolumeClaim/);
   assert.match(manifest, /type: ClusterIP/);
+  assert.match(manifest, /requests:\s+[\s\S]*?memory: 2Gi/);
+  assert.match(manifest, /limits:\s+[\s\S]*?memory: 4Gi/);
   assert.doesNotMatch(manifest, /NodePort|LoadBalancer/);
   const dockerfile = fs.readFileSync("demo/local/laya.Dockerfile", "utf8");
   assert.match(dockerfile, /laya\[serve\]==0\.3\.21/);
@@ -54,6 +56,8 @@ test("local scripts bind browser ports to loopback and contain no committed cred
   assert.match(scripts, /O=Docker Inc/);
   assert.match(scripts, /com\.docker\.nv-gpu-info\.exe/);
   assert.match(scripts, /docker desktop restart/);
+  assert.match(scripts, /Show-KravelLayaDiagnostics/);
+  assert.match(scripts, /OOMKilled/);
   assert.doesNotMatch(scripts, /gsk_[A-Za-z0-9_-]{16,}|BEGIN PRIVATE KEY/i);
 
   for (const name of ["prepare", "demo", "run-pipeline", "reset"]) {

@@ -27,7 +27,12 @@ foreach ($image in @("busybox:1.36", "prom/prometheus:v3.13.3", "grafana/grafana
 Write-Host "`n==> Starting Laya and downloading its English checkpoint into a persistent local volume"
 Invoke-KravelNative "kubectl" @("apply", "-f", (Join-Path $script:KravelRoot "deploy\laya-local.yaml"))
 Invoke-KravelNative "kubectl" @("-n", "kravel-ai", "rollout", "restart", "deployment/kravel-laya")
-Invoke-KravelNative "kubectl" @("-n", "kravel-ai", "rollout", "status", "deployment/kravel-laya", "--timeout=10m")
+try {
+  Invoke-KravelNative "kubectl" @("-n", "kravel-ai", "rollout", "status", "deployment/kravel-laya", "--timeout=10m")
+} catch {
+  Show-KravelLayaDiagnostics
+  throw
+}
 
 Write-Host "`n==> Preloading Kravel and the local observability stack"
 Invoke-KravelNative "kubectl" @("apply", "-f", (Join-Path $script:KravelRoot "deploy\local.yaml"))
