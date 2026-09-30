@@ -7,7 +7,7 @@ param(
 Assert-KravelPrerequisites
 
 if (-not (Test-Path -LiteralPath $script:KravelStatePath)) {
-  throw "No local demo state was found. Run .\demo\local\demo.ps1 first."
+  throw "No local demo state was found. Run .\demo\local\demo.cmd first."
 }
 $state = Get-Content -LiteralPath $script:KravelStatePath -Raw | ConvertFrom-Json
 

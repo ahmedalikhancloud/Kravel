@@ -74,7 +74,7 @@ cd Kravel
 Run once while you have a reliable internet connection:
 
 ```powershell
-.\demo\local\prepare.ps1
+.\demo\local\prepare.cmd
 ```
 
 This command:
@@ -93,7 +93,7 @@ The first run can take several minutes and needs multiple gigabytes of disk spac
 ## Run the main escalation demo
 
 ```powershell
-.\demo\local\demo.ps1 -Scenario escalation
+.\demo\local\demo.cmd -Scenario escalation
 ```
 
 The script creates four failures:
@@ -118,7 +118,7 @@ The exact route is determined by the real local Laya output. If confidence is un
 To demonstrate a smaller, potentially high-confidence incident:
 
 ```powershell
-.\demo\local\demo.ps1 -Scenario routine
+.\demo\local\demo.cmd -Scenario routine
 ```
 
 This creates only the ConfigMap regression. If Laya meets the configured confidence and margin thresholds, the policy selects `predefined_runbook`; otherwise it safely escalates to Qwen. Neither route mutates the cluster during remediation.
@@ -149,7 +149,7 @@ The `mlflow_logging` measurement covers the MLflow requests completed before tha
 Reuse the same recorded incident window without breaking the cluster again:
 
 ```powershell
-.\demo\local\run-pipeline.ps1 -Runs 3
+.\demo\local\run-pipeline.cmd -Runs 3
 ```
 
 This is useful for showing warm-model latency and building Grafana's p95 charts. The first Qwen request after an idle period may be slower because the model is loaded on demand.
@@ -159,7 +159,7 @@ This is useful for showing warm-model latency and building Grafana's p95 charts.
 A compact narration is:
 
 1. Show the healthy Pods.
-2. Run `demo.ps1` and explain each injected failure.
+2. Run `demo.cmd` and explain each injected failure.
 3. Point out Laya's fast classification.
 4. Explain the policy decision and why severe or ambiguous evidence escalates.
 5. Show Qwen choosing time-travel tools instead of receiving unrestricted cluster access.
@@ -172,13 +172,13 @@ A compact narration is:
 Remove disposable workloads, Kravel history, dashboards, and port forwards while retaining downloaded models:
 
 ```powershell
-.\demo\local\reset.ps1
+.\demo\local\reset.cmd
 ```
 
 To also remove Laya and its persistent checkpoint cache:
 
 ```powershell
-.\demo\local\reset.ps1 -Full
+.\demo\local\reset.cmd -Full
 ```
 
 The Qwen model and Docker images remain cached. Remove those separately through Docker Desktop only if you intentionally want to reclaim disk space.
@@ -205,7 +205,18 @@ docker model context use kravel-desktop
 docker model status
 ```
 
-If `kravel-desktop` already exists, skip the `create` command. `prepare.ps1` now performs this detection and setup automatically. Do not disable Docker Desktop Model Runner; Kravel uses that instance.
+If `kravel-desktop` already exists, skip the `create` command. `prepare.cmd` now performs this detection and setup automatically. Do not disable Docker Desktop Model Runner; Kravel uses that instance.
+
+### PowerShell says running scripts is disabled
+
+Use the supplied `.cmd` launchers. They apply `ExecutionPolicy Bypass` only to the child PowerShell process and do not change your user or machine policy:
+
+```powershell
+.\demo\local\prepare.cmd
+.\demo\local\demo.cmd -Scenario escalation
+```
+
+Do not change the machine-wide execution policy to `Unrestricted` for this demo.
 
 ### GPU-backed inference is unavailable
 
@@ -213,10 +224,10 @@ Verify the NVIDIA driver, run `wsl --update`, restart Docker Desktop, and confir
 
 ### `ErrImageNeverPull` for `kravel:local` or `kravel-laya:local`
 
-Confirm Docker Desktop Kubernetes uses the `kubeadm` provisioner, the containerd image store is enabled, and `prepare.ps1` completed successfully. Then rebuild:
+Confirm Docker Desktop Kubernetes uses the `kubeadm` provisioner, the containerd image store is enabled, and `prepare.cmd` completed successfully. Then rebuild:
 
 ```powershell
-.\demo\local\prepare.ps1
+.\demo\local\prepare.cmd
 ```
 
 ### Laya startup takes several minutes
@@ -228,7 +239,7 @@ kubectl -n kravel-ai logs deployment/kravel-laya
 kubectl -n kravel-ai get pods,pvc
 ```
 
-Later starts reuse `laya-model-cache` unless you run `reset.ps1 -Full` or reset Docker Desktop's Kubernetes cluster.
+Later starts reuse `laya-model-cache` unless you run `reset.cmd -Full` or reset Docker Desktop's Kubernetes cluster.
 
 ### Kravel cannot reach Qwen
 
@@ -243,7 +254,7 @@ If it fails, verify Docker Model Runner is enabled and restart Docker Desktop. D
 Run the pipeline at least once, wait a few seconds for Prometheus, then refresh Grafana:
 
 ```powershell
-.\demo\local\run-pipeline.ps1
+.\demo\local\run-pipeline.cmd
 ```
 
 ### Port 3000 or 5000 is already used

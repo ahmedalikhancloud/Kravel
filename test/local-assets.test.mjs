@@ -49,4 +49,10 @@ test("local scripts bind browser ports to loopback and contain no committed cred
   assert.match(scripts, /model context.*kravel-desktop|contextName = "kravel-desktop"/s);
   assert.match(scripts, /http:\/\/127\.0\.0\.1:12434/);
   assert.doesNotMatch(scripts, /gsk_[A-Za-z0-9_-]{16,}|BEGIN PRIVATE KEY/i);
+
+  for (const name of ["prepare", "demo", "run-pipeline", "reset"]) {
+    const launcher = fs.readFileSync(`demo/local/${name}.cmd`, "utf8");
+    assert.match(launcher, /-NoProfile -ExecutionPolicy Bypass -File/);
+    assert.match(launcher, /%~dp0/);
+  }
 });

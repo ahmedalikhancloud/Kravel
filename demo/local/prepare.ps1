@@ -42,4 +42,4 @@ $probe = "fetch('http://model-runner.docker.internal/engines/v1/models').then(as
 Invoke-KravelNative "kubectl" @("-n", "kravel-system", "exec", "deployment/kravel", "--", "node", "-e", $probe)
 
 Write-Host "`nPreparation complete. Models and container images are cached locally."
-Write-Host "Run the demo with: .\demo\local\demo.ps1 -Scenario escalation"
+Write-Host "Run the demo with: .\demo\local\demo.cmd -Scenario escalation"

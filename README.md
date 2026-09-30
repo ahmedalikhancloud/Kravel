@@ -69,8 +69,8 @@ Prompts, evidence payloads, generated reports, object names, endpoint URLs, and 
 Complete the one-time Docker Desktop setup in [DEMO.md](DEMO.md), then run:
 
 ```powershell
-.\demo\local\prepare.ps1
-.\demo\local\demo.ps1 -Scenario escalation
+.\demo\local\prepare.cmd
+.\demo\local\demo.cmd -Scenario escalation
 ```
 
 Open:
@@ -81,13 +81,13 @@ Open:
 Repeat the same reconstructed incident window to build latency distributions:
 
 ```powershell
-.\demo\local\run-pipeline.ps1 -Runs 3
+.\demo\local\run-pipeline.cmd -Runs 3
 ```
 
 Clean up disposable resources while keeping models cached:
 
 ```powershell
-.\demo\local\reset.ps1
+.\demo\local\reset.cmd
 ```
 
 ## Temporal interfaces

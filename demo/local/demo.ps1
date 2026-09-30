@@ -142,5 +142,5 @@ $state | ConvertTo-Json | Set-Content -LiteralPath $script:KravelStatePath -Enco
 Write-Host "`nDemo ready."
 Write-Host "Grafana: http://localhost:3000"
 Write-Host "MLflow:  http://localhost:5000"
-Write-Host "Rerun the same incident window: .\demo\local\run-pipeline.ps1 -Runs 3"
-Write-Host "Cleanup: .\demo\local\reset.ps1"
+Write-Host "Rerun the same incident window: .\demo\local\run-pipeline.cmd -Runs 3"
+Write-Host "Cleanup: .\demo\local\reset.cmd"
