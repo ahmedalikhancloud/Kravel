@@ -40,7 +40,15 @@ Invoke-KravelNative "kubectl" @("apply", "-f", (Join-Path $script:KravelRoot "de
 Invoke-KravelNative "kubectl" @("-n", "kravel-system", "rollout", "restart", "deployment/kravel")
 Invoke-KravelNative "kubectl" @("-n", "kravel-system", "rollout", "status", "deployment/kravel", "--timeout=3m")
 foreach ($deployment in @("kravel-prometheus", "kravel-grafana", "kravel-mlflow")) {
-  Invoke-KravelNative "kubectl" @("-n", "kravel-observability", "rollout", "status", "deployment/$deployment", "--timeout=5m")
+  try {
+    Invoke-KravelNative "kubectl" @("-n", "kravel-observability", "rollout", "status", "deployment/$deployment", "--timeout=5m")
+  } catch {
+    Show-KravelDeploymentDiagnostics `
+      -Namespace "kravel-observability" `
+      -Deployment $deployment `
+      -Container ($deployment -replace "^kravel-", "")
+    throw
+  }
 }
 
 Write-Host "`n==> Verifying that a Kubernetes Pod can reach Docker Model Runner"

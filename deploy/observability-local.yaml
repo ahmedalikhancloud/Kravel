@@ -269,6 +269,14 @@ spec:
               value: "false"
             - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
               value: /var/lib/grafana/dashboards/dashboard.json
+            - name: GF_PLUGINS_PREINSTALL_DISABLED
+              value: "true"
+            - name: GF_ANALYTICS_REPORTING_ENABLED
+              value: "false"
+            - name: GF_ANALYTICS_CHECK_FOR_UPDATES
+              value: "false"
+            - name: GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES
+              value: "false"
           ports:
             - name: http
               containerPort: 3000
@@ -279,8 +287,8 @@ spec:
             initialDelaySeconds: 3
             periodSeconds: 3
           resources:
-            requests: {cpu: 25m, memory: 96Mi}
-            limits: {cpu: 300m, memory: 256Mi}
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {cpu: "1", memory: 512Mi}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -348,6 +356,9 @@ spec:
       containers:
         - name: mlflow
           image: ghcr.io/mlflow/mlflow:v3.14.0
+          env:
+            - name: MLFLOW_SERVER_ENABLE_JOB_EXECUTION
+              value: "false"
           command: ["mlflow"]
           args:
             - server
@@ -355,6 +366,8 @@ spec:
             - 0.0.0.0
             - --port
             - "5000"
+            - --workers
+            - "1"
             - --backend-store-uri
             - sqlite:////mlflow/mlflow.db
             - --default-artifact-root
@@ -371,8 +384,8 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
           resources:
-            requests: {cpu: 50m, memory: 192Mi}
-            limits: {cpu: 500m, memory: 512Mi}
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 768Mi}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

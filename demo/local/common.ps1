@@ -33,11 +33,16 @@ function Invoke-KravelNativeWithRetry {
   }
 }
 
-function Show-KravelLayaDiagnostics {
-  Write-Warning "Laya did not become ready. Collecting diagnostics before preparation stops."
-  & kubectl -n kravel-ai get pods,pvc -o wide
+function Show-KravelDeploymentDiagnostics {
+  param(
+    [Parameter(Mandatory = $true)][string]$Namespace,
+    [Parameter(Mandatory = $true)][string]$Deployment,
+    [Parameter(Mandatory = $true)][string]$Container
+  )
+  Write-Warning "$Deployment did not become ready. Collecting diagnostics before preparation stops."
+  & kubectl -n $Namespace get pods -l "app=$Deployment" -o wide
 
-  $podJson = & kubectl -n kravel-ai get pods -l app=kravel-laya -o json 2>$null
+  $podJson = & kubectl -n $Namespace get pods -l "app=$Deployment" -o json 2>$null
   if ($LASTEXITCODE -ne 0 -or -not $podJson) { return }
 
   try {
@@ -46,24 +51,30 @@ function Show-KravelLayaDiagnostics {
     if (-not $pod) { return }
 
     $podName = $pod.metadata.name
-    $status = $pod.status.containerStatuses | Where-Object { $_.name -eq "laya" } | Select-Object -First 1
+    $containerSpec = $pod.spec.containers | Where-Object { $_.name -eq $Container } | Select-Object -First 1
+    $status = $pod.status.containerStatuses | Where-Object { $_.name -eq $Container } | Select-Object -First 1
     $termination = $null
     if ($status -and $status.lastState -and $status.lastState.PSObject.Properties.Name -contains "terminated") {
       $termination = $status.lastState.terminated
     }
     if ($termination -and $termination.reason -eq "OOMKilled") {
-      Write-Warning "Laya was OOMKilled. The deployment now allows a 4 GiB peak; make sure Docker Desktop has an 8 GB budget (about 7.5 GiB in docker info)."
+      $memoryLimit = $containerSpec.resources.limits.memory
+      Write-Warning "$Deployment/$Container was OOMKilled at its $memoryLimit memory limit."
     }
 
-    Write-Host "`n--- Laya Pod description ($podName) ---"
-    & kubectl -n kravel-ai describe pod $podName
-    Write-Host "`n--- Laya previous-container logs ($podName) ---"
-    & kubectl -n kravel-ai logs $podName --previous --tail=200
-    Write-Host "`n--- Laya current-container logs ($podName) ---"
-    & kubectl -n kravel-ai logs $podName --tail=200
+    Write-Host "`n--- $Deployment Pod description ($podName) ---"
+    & kubectl -n $Namespace describe pod $podName
+    Write-Host "`n--- $Deployment previous-container logs ($podName) ---"
+    & kubectl -n $Namespace logs $podName -c $Container --previous --tail=200
+    Write-Host "`n--- $Deployment current-container logs ($podName) ---"
+    & kubectl -n $Namespace logs $podName -c $Container --tail=200
   } catch {
-    Write-Warning "Could not collect every Laya diagnostic: $($_.Exception.Message)"
+    Write-Warning "Could not collect every $Deployment diagnostic: $($_.Exception.Message)"
   }
+}
+
+function Show-KravelLayaDiagnostics {
+  Show-KravelDeploymentDiagnostics -Namespace "kravel-ai" -Deployment "kravel-laya" -Container "laya"
 }
 
 function Repair-KravelDockerGpuHelper {

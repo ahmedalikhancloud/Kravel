@@ -90,7 +90,7 @@ This command:
 
 The first run can take several minutes and needs multiple gigabytes of disk space. Do not leave this step until the presentation begins.
 
-Laya's English checkpoint uses about 2.2 GB once loaded and can peak above 3 GB. The local manifest gives it a 4 GiB limit, so Docker Desktop should have an 8 GB memory budget (shown as roughly 7.5 GiB or more under `Total Memory` in `docker info`) before preparation.
+Laya's English checkpoint can approach 4 GiB while loading in the CPU/PyTorch server. The local manifest gives it a 4.5 GiB limit, so Docker Desktop should have an 8 GB memory budget (shown as roughly 7.5 GiB or more under `Total Memory` in `docker info`) before preparation.
 
 Container and model downloads retry automatically because Docker registry CDN connections can occasionally close mid-layer. Rerunning `prepare.cmd` is safe: Docker reuses completed layers, the built images, and the downloaded Qwen model.
 
@@ -255,7 +255,7 @@ kubectl -n kravel-ai get pods,pvc
 
 Later starts reuse `laya-model-cache` unless you run `reset.cmd -Full` or reset Docker Desktop's Kubernetes cluster.
 
-If `kubectl describe pod` says `Last State: OOMKilled`, confirm you have pulled this repository's latest changes: older versions capped Laya at 2 GiB, which is below its normal loading peak. Reapply the corrected 4 GiB limit by rerunning:
+If `kubectl describe pod` says `Last State: OOMKilled`, confirm you have pulled this repository's latest changes: older versions capped Laya below its observed loading peak. Reapply the corrected 4.5 GiB limit by rerunning:
 
 ```powershell
 git pull
@@ -263,6 +263,10 @@ git pull
 ```
 
 If the Pod is still OOM-killed, increase the memory budget available to Docker Desktop/WSL to at least 8 GB, restart Docker Desktop, and rerun preparation. The script automatically prints the Pod description and previous-container logs when a Laya rollout fails.
+
+### Grafana or MLflow does not become ready
+
+The local profile disables Grafana's optional plugin downloads. It also runs MLflow with one web worker and disables MLflow's unused background job-execution workers, keeping the single-user demo inside an 8 GB Docker budget. If an observability rollout still fails, `prepare.cmd` automatically prints that Pod's termination reason and logs. Check for `OOMKilled`, then confirm `docker info` reports roughly 7.5 GiB or more under `Total Memory`.
 
 ### Kravel cannot reach Qwen
 

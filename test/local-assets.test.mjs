@@ -18,7 +18,7 @@ test("Laya is CPU-only, private to the cluster, and uses a persistent model cach
   assert.match(manifest, /kind: PersistentVolumeClaim/);
   assert.match(manifest, /type: ClusterIP/);
   assert.match(manifest, /requests:\s+[\s\S]*?memory: 2Gi/);
-  assert.match(manifest, /limits:\s+[\s\S]*?memory: 4Gi/);
+  assert.match(manifest, /limits:\s+[\s\S]*?memory: 4608Mi/);
   assert.doesNotMatch(manifest, /NodePort|LoadBalancer/);
   const dockerfile = fs.readFileSync("demo/local/laya.Dockerfile", "utf8");
   assert.match(dockerfile, /laya\[serve\]==0\.3\.21/);
@@ -31,6 +31,11 @@ test("observability dashboard exposes model, guardrail, policy, and MLflow stage
     assert.match(manifest, new RegExp(stage));
   }
   assert.match(manifest, /storage\.tsdb\.retention\.time=1h/);
+  assert.match(manifest, /GF_PLUGINS_PREINSTALL_DISABLED/);
+  assert.match(manifest, /--workers\s+- "1"/);
+  assert.match(manifest, /MLFLOW_SERVER_ENABLE_JOB_EXECUTION\s+value: "false"/);
+  assert.match(manifest, /limits: \{cpu: "1", memory: 512Mi\}/);
+  assert.match(manifest, /limits: \{cpu: "1", memory: 768Mi\}/);
   assert.doesNotMatch(manifest, /kind:\s+Secret/);
   assert.doesNotMatch(manifest, /(api[_-]?key|token|password):\s*[^\s{}]/i);
 
@@ -57,6 +62,7 @@ test("local scripts bind browser ports to loopback and contain no committed cred
   assert.match(scripts, /com\.docker\.nv-gpu-info\.exe/);
   assert.match(scripts, /docker desktop restart/);
   assert.match(scripts, /Show-KravelLayaDiagnostics/);
+  assert.match(scripts, /Show-KravelDeploymentDiagnostics/);
   assert.match(scripts, /OOMKilled/);
   assert.doesNotMatch(scripts, /gsk_[A-Za-z0-9_-]{16,}|BEGIN PRIVATE KEY/i);
 
