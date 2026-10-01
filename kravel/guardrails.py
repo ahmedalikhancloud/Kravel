@@ -63,6 +63,43 @@ def guard_model_input(value, target: str, max_characters: int = 20_000):
     return {"value": text, "decision": "allow_with_redactions" if findings else "allow", "findings": findings, "latencyMs": _ms(started)}
 
 
+def guard_request_scope(question, *, target="", input_findings=None):
+    """Transparent, conservative request routing. Not a semantic safety classifier.
+
+    A selected object can clarify an otherwise vague debugging request, but cannot
+    override an injection or turn a creative/unrelated task into an investigation.
+    Kubernetes RBAC and the approval broker remain the security boundaries.
+    """
+    started = time.perf_counter()
+    text = _normalize(question).strip()
+    injection = any(f.get("code") == "prompt_injection_pattern" for f in input_findings or [])
+    help_request = bool(re.fullmatch(r"(?:hi|hello|hey|thanks|thank you|help|help me|what can you do|how do i use (?:you|kravel)|how does (?:this|kravel) work)[.!?\s]*", text, re.I))
+    unrelated_task = bool(re.search(r"\b(?:joke|poem|story|recipe|weather|capital of|football|horoscope)\b", text, re.I))
+    subject = bool(re.search(r"\b(?:kubernetes|k8s|kubectl|cluster|namespace|pods?|deployments?|replicasets?|configmaps?|services?|endpoints?|ingress|containers?|rollouts?|logs?|events?|oomkilled|imagepullbackoff|crashloopbackoff|crash|fail(?:ure|ures|ing|ed)?|readiness|rbac|kravel|karl)\b", text, re.I))
+    intent = bool(re.search(r"\b(?:investigate|inspect|diagnose|debug|troubleshoot|check|show|list|get|logs|events|explain|describe|read|why|what|how|find|help|fix|repair|recover|review|compare|is|are)\b", text, re.I))
+    scope = subject or bool(target and intent)
+    learning = not target and bool(re.search(r"\b(?:what (?:is|are|does)|explain what|how (?:do|does))\b", text, re.I)) and bool(re.search(r"\b(?:pods?|deployments?|replicasets?|configmaps?|services?|kubernetes|k8s)\b", text, re.I)) and not re.search(r"/|\b(?:my|our|this|current|demo|failing|failed|wrong|health|broken|restarting|crash|logs?|events?)\b", text, re.I)
+    checks = [
+        {"rule": "instruction_integrity", "passed": not injection, "reason": "Instruction override pattern detected." if injection else "No recognized instruction override pattern."},
+        {"rule": "supported_task", "passed": not unrelated_task, "reason": "Unrelated or creative task requested." if unrelated_task else "No recognized unrelated task pattern."},
+        {"rule": "kubernetes_context", "passed": scope, "reason": "Kubernetes term or selected-resource context found." if scope else "No Kubernetes context found."},
+        {"rule": "debug_or_learning_intent", "passed": intent, "reason": "Inspection, debugging, or learning intent found." if intent else "No supported intent found; ask a specific question."},
+    ]
+    if injection:
+        decision, code = "reject", "instruction_override"
+        reason = "The request contains an instruction-override pattern. Nothing was sent to Qwen or read from the cluster."
+    elif help_request:
+        decision, code = "help", "assistant_help"
+        reason = "Greeting or help request; a local introduction is sufficient."
+    elif unrelated_task or not scope or not intent:
+        decision, code = "redirect", "outside_debugger_scope"
+        reason = "Karl handles Kubernetes inspection, troubleshooting, and learning—not general-purpose questions."
+    else:
+        decision, code = "allow", "supported_kubernetes_request"
+        reason = "The request matches the supported Kubernetes debugging or learning scope."
+    return {"decision": decision, "requestMode": "learning" if decision == "allow" and learning else "investigation" if decision == "allow" else "local_reply", "reasonCode": code, "reason": reason, "checks": checks, "policyVersion": "karl-scope-v1", "implementation": "deterministic_rules", "latencyMs": _ms(started)}
+
+
 def guard_debugger_output(value, max_characters: int = 12_000):
     started = time.perf_counter()
     text, findings = _redact(_normalize(value))

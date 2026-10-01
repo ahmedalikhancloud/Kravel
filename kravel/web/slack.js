@@ -69,7 +69,7 @@ function render(proposals) {
 }
 
 async function load() {
-  try { const payload = await api("/v1/proposals"); render(payload.proposals || []); document.querySelector("#mode").textContent = payload.slackEnabled ? "SLACK + LOCAL" : "LOCAL WORKFLOW"; }
+  try { const payload = await api("/v1/proposals"); const since = Date.parse(payload.session?.startedAt || ""); render((payload.proposals || []).filter((p) => ["pending", "approved", "executing"].includes(p.status) || !Number.isFinite(since) || Date.parse(p.created_at) >= since)); document.querySelector("#mode").textContent = payload.slackEnabled ? "SLACK + LOCAL" : "LOCAL WORKFLOW"; }
   catch (error) { messages.replaceChildren(node("div", "empty", `Broker unavailable: ${error.message}`)); }
 }
 

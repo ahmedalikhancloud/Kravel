@@ -10,7 +10,8 @@ The main browser UI renders the live namespace as a navigable WebGL 3D observato
 - Read-only Kubernetes tools shaped like `get`, `describe`, `events`, and `logs`.
 - Evidence-first LangGraph investigations with evidence IDs, uncertainty, prevention, actual progress, and local run history.
 - A separate least-privilege approval broker restricted to four named Deployments, one named ConfigMap, and one named Service in `kravel-demo`.
-- An embedded human-only kubectl-compatible console with separate authentication. It is not a Bash shell or agent tool; manual writes require dry-run + explicit confirmation.
+- A beginner-friendly practice guide, on-demand resource inspector, and checkmarked repair checklist driven by actual workflow steps.
+- A traced, rule-based request gate: unrelated questions are redirected and recognized instruction overrides are blocked before model calls or investigation reads.
 - Local Slack-style approval inbox by default; real Slack reactions are optional.
 - Five-minute approval expiry, structured server dry-run, fixed repair catalog, and an append-only SQLite audit trail.
 - Prometheus, a provisioned Grafana dashboard, and persistent MLflow traces with nested spans for guardrails, Qwen calls, tools, and tracing overhead. Local investigation traces include bounded redacted questions, model messages/responses, evidence, and diagnoses; timing-only mode remains available.
@@ -28,7 +29,7 @@ bash demo/local/prepare.sh
 bash demo/local/demo.sh
 ```
 
-Preparation downloads Qwen, builds Kravel, removes obsolete Laya resources, and starts observability. The demo creates five healthy labs and connects the localhost pages. Existing `.cmd` wrappers still work on Windows.
+Preparation downloads Qwen, builds Kravel, removes obsolete Laya resources, and starts observability. The demo creates five healthy labs and a fresh presentation session, hiding past completed work without deleting retained history. Existing `.cmd` wrappers still work on Windows.
 
 Open the Kravel URL, then break one lab:
 
@@ -59,8 +60,6 @@ Approval broker ServiceAccount ── server dry-run ── 5-minute human appro
       │
       └── patch only: four demo Deployments, config-demo ConfigMap, demo-gateway Service
 
-Human browser ── separate origin + unlock key ── restricted operator ServiceAccount
-      └── typed command → field allowlist → dry-run → explicit manual confirmation
 ```
 
 The Qwen process never receives the broker approval token. The broker does not accept arbitrary commands or arbitrary patches: it resolves a fixed fix ID to code-owned structured Kubernetes API operations. Secrets are not a supported read resource.
@@ -81,8 +80,7 @@ The preparation script writes them to an uncommitted Kubernetes Secret. Kravel n
 
 | Page | Default URL | Purpose |
 |---|---|---|
-| Kravel | `http://127.0.0.1:8080` | 3D cluster map, Karl, tools, proposals, audit |
-| Human console | embedded; `http://127.0.0.1:8082` | separately unlocked, bounded real cluster commands |
+| Kravel | `http://127.0.0.1:8080` | guided practice, 3D cluster, Karl, repair progress |
 | Local Slack | printed by the demo launcher | approve or reject a dry-run proposal |
 | Grafana | `http://127.0.0.1:3000` | latency, audit, approval, and fix metrics |
 | MLflow | `http://127.0.0.1:5000` | nested investigation traces |
@@ -96,7 +94,7 @@ python -m pytest
 bash -n demo/local/*.sh
 node --check kravel/web/app.js
 node --check kravel/web/scene.js
-node --test tests/topology.test.mjs
+node --test tests/*.test.mjs
 node --check kravel/web/slack.js
 ```
 

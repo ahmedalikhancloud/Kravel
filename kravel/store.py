@@ -86,6 +86,9 @@ class AuditStore:
                   finished_at TEXT NOT NULL DEFAULT '', duration_ms REAL NOT NULL DEFAULT 0,
                   details_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(run_id, step_key)
                 );
+                CREATE TABLE IF NOT EXISTS presentation_state (
+                  key TEXT PRIMARY KEY, value_json TEXT NOT NULL
+                );
                 """
             )
             columns = {row[1] for row in self.connection.execute("PRAGMA table_info(investigations)").fetchall()}
@@ -96,6 +99,20 @@ class AuditStore:
     def close(self):
         with self.lock:
             self.connection.close()
+
+    def demo_session(self):
+        """A persisted display boundary, not deletion of audit or trace history."""
+        with self.lock, self.connection:
+            row = self.connection.execute("SELECT value_json FROM presentation_state WHERE key='demo_session'").fetchone()
+            if row:
+                return json.loads(row[0])
+            return self.start_demo_session()
+
+    def start_demo_session(self):
+        value = {"id": str(uuid.uuid4()), "startedAt": to_iso()}
+        with self.lock, self.connection:
+            self.connection.execute("INSERT OR REPLACE INTO presentation_state VALUES ('demo_session', ?)", (stable_json(value),))
+        return value
 
     def start_workflow(self, run_id, kind, namespace, target=""):
         with self.lock, self.connection:

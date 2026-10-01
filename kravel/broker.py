@@ -38,6 +38,7 @@ class ApprovalBroker:
         self.slack = SlackApprovalClient(config.slack_bot_token, config.slack_channel_id)
         self.threads: dict[str, threading.Thread] = {}
         self.lock = threading.RLock()
+        store.demo_session()
         for proposal in self.store.active_proposals():
             if proposal["status"] == "pending":
                 self._start_waiter(proposal["id"])
@@ -300,7 +301,7 @@ def create_broker_server(broker: ApprovalBroker, config):
                     body = prometheus_metrics(broker.store, "approval-broker").encode()
                     self.send_response(200); self.send_header("Content-Type", "text/plain; version=0.0.4"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
                 if path == "/v1/proposals":
-                    return self.json(200, {"proposals": [{**p, "workflow": broker.store.workflow(p["id"])} for p in broker.store.proposals(100)], "timeoutSeconds": config.approval_timeout_seconds, "slackEnabled": broker.slack.enabled})
+                    return self.json(200, {"proposals": [{**p, "workflow": broker.store.workflow(p["id"])} for p in broker.store.proposals(100)], "session": broker.store.demo_session(), "timeoutSeconds": config.approval_timeout_seconds, "slackEnabled": broker.slack.enabled})
                 if path.startswith("/v1/proposals/"):
                     proposal = broker.store.proposal(path.split("/")[3])
                     return self.json(200 if proposal else 404, proposal or {"error": "not_found"})
@@ -314,6 +315,15 @@ def create_broker_server(broker: ApprovalBroker, config):
             path = urlparse(self.path).path
             try:
                 body = self.body()
+                if path == "/v1/demo-session":
+                    if not self.local_authorized():
+                        return self.json(401, {"error": "approval_token_required"})
+                    with broker.lock:
+                        if broker.store.active_proposals():
+                            return self.json(409, {"error": "Active approvals cannot be hidden. Resolve them first."})
+                        session = broker.store.start_demo_session()
+                        broker.store.record("approval-broker", "demo.view_started", actor="local-human", details={"sessionId": session["id"], "historyPreserved": True})
+                        return self.json(200, {"session": session, "historyPreserved": True})
                 if path == "/v1/proposals":
                     return self.json(201, broker.create(str(body.get("fixId", "")), str(body.get("namespace") or config.default_namespace), str(body.get("actor") or "kravel-debugger")))
                 if path.startswith("/v1/proposals/") and path.endswith(("/approve", "/reject")):

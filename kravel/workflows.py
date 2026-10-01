@@ -131,25 +131,42 @@ class WorkflowManager:
         tracer = MlflowTracer(self.config.mlflow_url, self.config.mlflow_experiment)
         progress = Progress(self.store, run_id, tracer)
         last = {}
+        readiness_seen = False
+        stability_started = None
         try:
             with tracer.span("repair.verify", "CHAIN", {"proposal_id": proposal["id"]}), progress.step("recovery", "Observe rollout & stable recovery (90 seconds)"):
+                self.store.workflow_step(run_id, "rollout", "Wait for updated workload readiness", "running")
                 while not self.stop.is_set() and time.monotonic()-started < 90:
-                    with tracer.span("verification.observation", "TOOL"):
+                    with tracer.span("verification.observation", "TOOL") as span:
                         try:
                             ok, last = recovery_observation(self.kube, proposal)
                         except Exception as exc:
                             ok, last = False, {"reason": public_evidence(str(exc))}
+                        span.set_outputs({"ready": bool(ok), "observation": public_evidence(last)})
                     stable = stable + 1 if ok else 0
+                    if ok and not readiness_seen:
+                        readiness_seen = True
+                        self.store.workflow_step(run_id, "rollout", "Wait for updated workload readiness", "completed", duration_ms=(time.monotonic()-started)*1000, details=public_evidence(last))
+                        stability_started = time.monotonic()
+                        self.store.workflow_step(run_id, "stability", "Confirm readiness in three consecutive checks", "running")
                     self.store.update_workflow(run_id, payload={"observation": public_evidence(last), "stableObservations": stable, "traceId": tracer.trace_id})
                     if stable >= 3:
+                        self.store.workflow_step(run_id, "stability", "Confirm readiness in three consecutive checks", "completed", duration_ms=(time.monotonic()-stability_started)*1000, details={"stableObservations": stable, "observation": public_evidence(last)})
                         break
                     self.stop.wait(3)
             status = "recovered" if stable >= 3 else "interrupted" if self.stop.is_set() else "timeout"
             if status != "recovered":
+                for step in self.store.workflow(run_id)["steps"]:
+                    if step["status"] == "running":
+                        stage_started = stability_started if step["step_key"] == "stability" else started
+                        self.store.workflow_step(run_id, step["step_key"], step["label"], status, duration_ms=(time.monotonic()-stage_started)*1000, details=public_evidence(last))
                 self.store.workflow_step(run_id, "recovery", "Observe rollout & stable recovery (90 seconds)", status, duration_ms=(time.monotonic()-started)*1000, details=last)
             self.store.update_workflow(run_id, status=status)
             self.store.record("debugger", "fix.verification", actor="read-only-verifier", resource=proposal["resource"], outcome=status, duration_ms=(time.monotonic()-started)*1000, trace_id=tracer.trace_id, details={"proposalId": proposal["id"], "stabilityWindowSeconds": 6, "observation": public_evidence(last)})
         except Exception as exc:
+            for step in self.store.workflow(run_id)["steps"]:
+                if step["status"] == "running":
+                    self.store.workflow_step(run_id, step["step_key"], step["label"], "failed", details={"error": public_evidence(str(exc))})
             self.store.update_workflow(run_id, status="failed", payload={"error": public_evidence(str(exc)), "observation": public_evidence(last)})
             self.store.record("debugger", "fix.verification", actor="read-only-verifier", resource=proposal["resource"], outcome="failed", details={"proposalId": proposal["id"], "errorType": type(exc).__name__})
         finally:

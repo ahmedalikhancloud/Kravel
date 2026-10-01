@@ -12,8 +12,9 @@ done
 assert_prerequisites
 
 if [[ "$full" == false ]]; then
-  section "Restoring all four demo workloads to their healthy baseline"
+  section "Restoring all five demo workloads to their healthy baseline"
   bash "$KRAVEL_ROOT/demo/local/scenario.sh" reset all
+  fresh_demo_view
   printf '\nHealthy reset complete. Kravel, Grafana, MLflow, and Local Slack stayed online.\n'
   exit 0
 fi

@@ -16,7 +16,7 @@ Kravel is intentionally a debugger first and a tightly bounded demo repair workf
 - The approval token is not mounted into the debugger and is removed from the Local Slack address bar after page load.
 - Port-forwards bind to `127.0.0.1`; no inbound internet endpoint is needed.
 - Slack tokens, when used, come from environment variables and a Kubernetes Secret. They are never embedded in manifests or source.
-- The human console has its own origin, Pod, ServiceAccount, unlock key, and database. Karl has no console tool or credential. Submissions require authenticated sessions and exact Origin/Host checks, with no cross-origin command access.
+- The legacy operator backend has its own origin, Pod, ServiceAccount, unlock key, and database. It is absent from the guided UI and has no default launcher port-forward. Karl has no console tool or credential. If separately exposed, submissions require authenticated sessions and exact Origin/Host checks, with no cross-origin command access.
 - Console commands map to bounded API calls, never a subprocess or host shell. Manual patch fields/values are allowlisted in addition to RBAC. Writes require session-bound, one-use dry-run confirmation within 60 seconds and reject stale identities/specifications.
 - An API patch response is only acceptance. A read-only observer reports recovery, timeout, or interruption, without rollback or mutation retries.
 
@@ -24,6 +24,8 @@ Kravel is intentionally a debugger first and a tightly bounded demo repair workf
 
 - A read-only agent can still see non-secret workload fields, ConfigMap data, logs, and Events. Do not put credentials in those locations.
 - Kubernetes RBAC is the ultimate control boundary. Review `deploy/local.yaml` before adapting Kravel to a real cluster.
+- The request-scope gate is a transparent deterministic heuristic, not a complete semantic classifier or prompt-injection defense. It can misclassify unusual wording. Output redaction, mutation-command withholding, and uncertainty-marker checks do not establish factual grounding. Security does not depend on the model following these checks.
+- Fresh presentation sessions hide completed history, not audit records or MLflow traces, and cannot hide active work. Clearing the view is not a cluster reset or data deletion.
 - The bundled repair catalog is for the disposable `kravel-demo` namespace. Do not widen its namespace, resource names, or verbs without a separate security review.
 - Local Slack is a demo of the approval workflow, not a replacement for enterprise identity, retention, or separation-of-duties controls.
 - Multi-object fixes are not transactions. If a later operation fails, the audit records any earlier applied operation; inspect the result and prepare a new review instead of automatically retrying.

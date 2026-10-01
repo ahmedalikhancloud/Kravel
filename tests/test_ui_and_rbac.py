@@ -40,7 +40,7 @@ def test_obsolete_time_travel_and_laya_assets_are_not_referenced_by_runtime():
     assert "kravel.laya" not in runtime
 
 
-def test_console_identity_origin_and_agent_tool_boundary():
+def test_operator_identity_is_separate_and_not_in_guided_ui():
     manifest = (ROOT / "deploy" / "local.yaml").read_text(encoding="utf-8")
     operator_role = manifest.split("name: kravel-demo-human-operator", 1)[1].split("---", 1)[0]
     assert 'resourceNames: ["demo-gateway"]' in operator_role
@@ -53,4 +53,6 @@ def test_console_identity_origin_and_agent_tool_boundary():
     api = (ROOT / "kravel" / "api.py").read_text(encoding="utf-8")
     assert "/v1/console/command" not in api
     html = (ROOT / "kravel" / "web" / "index.html").read_text(encoding="utf-8")
-    assert 'src="http://127.0.0.1:8082/"' in html and 'id="runSteps"' in html
+    assert '<iframe' not in html and 'id="auditTrail"' not in html
+    assert 'id="runSteps"' in html and 'id="demoGuide"' in html
+    assert 'Human console' not in html and 'Audit trail' not in html

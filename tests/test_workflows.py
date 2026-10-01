@@ -134,3 +134,64 @@ def test_configmap_repair_restart_marker_is_unique_and_in_review_command():
     assert first["operations"] != second["operations"]
     assert "proposal-one" in first["command"]
     assert contains_patch({"containers": [{"name": "a", "extra": 1}]}, {"containers": [{"name": "a"}]})
+
+
+def test_demo_session_boundary_persists_without_deleting_history(tmp_path):
+    path = str(tmp_path / 'session.db')
+    store = AuditStore(path)
+    original = store.demo_session()
+    store.start_workflow('old', 'investigation', 'kravel-demo')
+    store.record('debugger', 'test-history')
+    fresh = store.start_demo_session()
+    assert fresh['id'] != original['id']
+    assert store.workflow('old') and len(store.audit_entries()) == 1
+    store.close()
+    assert AuditStore(path).demo_session() == fresh
+
+
+def test_recovery_checklist_requires_three_consecutive_ready_observations(monkeypatch):
+    import kravel.workflows as workflows
+    class LocalTracer(Tracer):
+        def __init__(self, *_): pass
+        def flush(self): pass
+    class NoWait:
+        def is_set(self): return False
+        def wait(self, _): pass
+    observations = iter([False, True, False, True, True, True])
+    snapshots = []
+    store = AuditStore()
+    manager = WorkflowManager(object(), store, load_config())
+    manager.stop = NoWait()
+    manager.verifier_slots.acquire()
+    store.start_workflow('verify:test', 'verification', 'kravel-demo')
+    def observe(*_):
+        snapshots.append({s['step_key']: s['status'] for s in store.workflow('verify:test')['steps']})
+        return next(observations), {'reason': 'Test observation'}
+    monkeypatch.setattr(workflows, 'MlflowTracer', LocalTracer)
+    monkeypatch.setattr(workflows, 'recovery_observation', observe)
+    manager._verify('verify:test', {'id': 'test', 'resource': 'Deployment/image-demo'})
+    result = store.workflow('verify:test')
+    steps = {s['step_key']: s['status'] for s in result['steps']}
+    assert result['status'] == 'recovered'
+    assert len(snapshots) == 6 and snapshots[0]['rollout'] == 'running'
+    assert snapshots[2]['rollout'] == 'completed' and snapshots[2]['stability'] == 'running'
+    assert steps['rollout'] == steps['stability'] == 'completed'
+    assert result['payload']['stableObservations'] == 3
+
+
+def test_interrupted_recovery_never_shows_success_checkmark(monkeypatch):
+    import kravel.workflows as workflows
+    class LocalTracer(Tracer):
+        def __init__(self, *_): pass
+        def flush(self): pass
+    store = AuditStore()
+    manager = WorkflowManager(object(), store, load_config())
+    manager.verifier_slots.acquire()
+    manager.stop.set()
+    store.start_workflow('verify:test', 'verification', 'kravel-demo')
+    monkeypatch.setattr(workflows, 'MlflowTracer', LocalTracer)
+    monkeypatch.setattr(workflows, 'recovery_observation', lambda *_: (_ for _ in ()).throw(AssertionError('No reads after stop')))
+    manager._verify('verify:test', {'id': 'test', 'resource': 'Deployment/image-demo'})
+    result = store.workflow('verify:test')
+    assert result['status'] == 'interrupted'
+    assert all(s['status'] != 'completed' for s in result['steps'])

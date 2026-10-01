@@ -26,6 +26,7 @@ WEB_ASSETS = {
     "/ui/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/ui/scene.js": ("scene.js", "text/javascript; charset=utf-8"),
     "/ui/topology.mjs": ("topology.mjs", "text/javascript; charset=utf-8"),
+    "/ui/demo.mjs": ("demo.mjs", "text/javascript; charset=utf-8"),
     "/ui/vendor/three.module.min.js": ("vendor/three.module.min.js", "text/javascript; charset=utf-8"),
     "/ui/vendor/three.core.min.js": ("vendor/three.core.min.js", "text/javascript; charset=utf-8"),
     "/ui/vendor/OrbitControls.js": ("vendor/OrbitControls.js", "text/javascript; charset=utf-8"),
@@ -47,6 +48,7 @@ def _broker_request(config, path: str, method: str = "GET", body=None):
 
 def create_server(store, config, kube):
     workflows = WorkflowManager(kube, store, config)
+    store.demo_session()
     class Handler(BaseHTTPRequestHandler):
         server_version = "Kravel/0.3.0"
 
@@ -69,7 +71,7 @@ def create_server(store, config, kube):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-src http://127.0.0.1:8082; base-uri 'none'; frame-ancestors 'none'")
+            self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
@@ -114,6 +116,8 @@ def create_server(store, config, kube):
                     return self.send_json(401, {"error": "unauthorized"})
                 query = self.query()
                 namespace = query.get("namespace", config.default_namespace)
+                if path == "/v1/demo-session":
+                    return self.send_json(200, {"session": store.demo_session(), "historyPreserved": True})
                 if path == "/v1/cluster":
                     result = discover_issues(kube, namespace)
                     store.record("debugger", "cluster.inspected", actor="operator", resource=namespace, duration_ms=result["durationMs"], details={"podCount": result["podCount"], "issueCount": len(result["issues"])})
@@ -171,6 +175,18 @@ def create_server(store, config, kube):
                     return self.send_json(401, {"error": "unauthorized"})
                 body = self.body()
                 namespace = str(body.get("namespace") or config.default_namespace)
+                if path == "/v1/demo-session":
+                    if not workflows.model_slot.acquire(blocking=False):
+                        return self.send_json(409, {"error": "Finish the current investigation before starting a fresh view."})
+                    try:
+                        proposals = _broker_request(config, "/v1/proposals").get("proposals", [])
+                        if any(p["status"] in {"pending", "approved", "executing"} for p in proposals) or any(r["status"] == "running" for r in store.workflows("verification", 100)):
+                            return self.send_json(409, {"error": "Resolve pending approvals and recovery checks first. Active work cannot be hidden."})
+                        session = store.start_demo_session()
+                        store.record("debugger", "demo.view_started", actor="operator", details={"sessionId": session["id"], "historyPreserved": True})
+                        return self.send_json(200, {"session": session, "historyPreserved": True, "clusterReset": False})
+                    finally:
+                        workflows.model_slot.release()
                 if path == "/v1/investigations":
                     question = str(body.get("message") or "").strip()
                     if not question:

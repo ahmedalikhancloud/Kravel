@@ -60,6 +60,14 @@ read_state() {
   sed -n "s/^${key}=//p" "$KRAVEL_STATE" | tail -n 1
 }
 
+fresh_demo_view() {
+  section "Starting a fresh demo view (audit records and MLflow traces are preserved)"
+  curl -fsS -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8080/v1/demo-session >/dev/null || die "Finish active investigations/approvals before clearing the demo view."
+  local view_approval_token
+  view_approval_token="$(kubectl -n kravel-system get secret kravel-approval-token -o jsonpath='{.data.token}' | base64 --decode)"
+  curl -fsS -X POST -H "X-Kravel-Approval-Token: $view_approval_token" -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8081/v1/demo-session >/dev/null || die "Could not start a fresh approval-inbox view. Resolve active approvals first."
+}
+
 stop_port_forwards() {
   local key pid
   if [[ -f "$KRAVEL_STATE" ]]; then
