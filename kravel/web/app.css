@@ -180,3 +180,4 @@ body.explorer-expanded { overflow:hidden; }.cluster-panel.is-expanded { position
   .next-lesson { padding-inline:18px; }.learning-guide { margin-inline:18px; }.glossary { grid-template-columns:1fr 1fr; }.fresh-start { padding:18px; flex-wrap:wrap; }.fresh-start>div { flex-basis:100%; }.fresh-start button { font-size:11px; }#sessionNotice { padding-inline:18px; }
   .right-rail { top:76px; bottom:12px; right:12px; max-width:calc(100vw - 24px); }.workflow-steps { grid-template-columns:1fr; }.workload-grid { grid-template-columns:1fr; }.request-decision { margin-inline:18px; }.proposal { padding:14px; }.proposal h3 { font-size:14px; }.cockpit-toolbar { padding-inline:18px; }
 }
+.lab-controls{display:block;width:calc(100% - 48px);height:670px;border:0;border-radius:14px;margin:20px 24px;background:#111b21}

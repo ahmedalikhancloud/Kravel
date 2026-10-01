@@ -22,9 +22,11 @@ bash demo/local/demo.sh
 
 This recreates **only `kravel-demo`**, waits for five healthy workloads, and starts a fresh presentation session. Past completed investigations and repairs are hidden from Kravel and Local Slack—not deleted from storage or MLflow. An active approval or investigation must finish before a fresh session can start.
 
-Open the printed **Kravel** and **Local Slack** links in separate browser tabs. Keep the private approval link out of screenshots, recordings, and Git. Its temporary credential is removed from the address bar after the inbox loads.
+Open the printed **Kravel**, **Local Slack**, and private **Demo controls** links. Open Demo controls once to unlock the practice buttons, then reload Kravel. The unlock lasts 15 minutes; reopen that private link when it expires. Alternatively paste its key into the embedded unlock form. Neither demo nor approval key is given to Karl.
 
-The Kravel page starts with a cluster explorer and a guided practice card. Investigation and repair panels appear only when needed. There is no embedded human console or audit feed; use Git Bash for manual cluster commands.
+Keep both private links out of screenshots, recordings, chat, and Git. Their credentials are removed from the address bar after loading. The locally ignored state file contains these links; treat it as sensitive.
+
+The Kravel page starts with a cluster explorer and five practice buttons. Investigation and repair panels appear only when needed. There is no embedded terminal or audit feed. The small human-only controls panel is isolated on another localhost origin; use Git Bash for optional manual commands.
 
 ## 3. Meet the cluster
 
@@ -41,13 +43,17 @@ Connections show ownership, settings references, and Service selectors—not mea
 
 ## 4. Try one problem
 
-For a first demo, choose **Missing image** in the practice card. Copy and run:
+For a first demo, click **Try this problem** on **Missing image**. A server dry-run preview opens. Review the named resource and change, then press **Break this lab** within 60 seconds. No click on “Try” alone changes the cluster.
+
+Wait for the actual failure in the live map, or click **Check the live cluster**. Kubernetes can take several seconds to report it. These are fixed human demo actions, not Karl tools; only `kravel-demo` can be touched. Active investigations/approvals must finish before a button can apply a change.
+
+All five cards work independently. **Reset all labs → Restore healthy labs** uses the same preview/confirmation flow. Watch for healthy Pods, then **Clear this view** for a clean presentation. The button resets settings, not stored traces or audit records.
+
+If you prefer Bash, the existing scripts still work:
 
 ```bash
 bash demo/local/scenario.sh break imagepull
 ```
-
-Click **I've run it · check the cluster**, or wait for the page's automatic refresh. The affected object changes health status. It can take a few seconds for Kubernetes to report the failure.
 
 Other independent lessons:
 
@@ -66,7 +72,7 @@ bash demo/local/scenario.sh break network
 | `configmap` | `MODE=broken` prevents startup | Restore settings, then restart that Deployment |
 | `network` | Service selects no Pods | Restore the HTTP workload's selector |
 
-Save `break all` for an advanced demonstration; one problem at a time is easier to follow.
+The browser intentionally allows breaking only one lesson at a time. Bash `break all` remains an advanced option.
 
 ## 5. Investigate, approve, and watch recovery
 
@@ -88,7 +94,15 @@ Open **Try the guardrail demo** in the practice guide, or ask Karl:
 
 > What is the capital of France?
 
-Karl should offer a Kubernetes question instead of producing an unrelated cluster diagnosis. The request panel states the decision and confirms **zero investigation tool calls and zero Qwen calls**. Background UI refreshes are separate read-only requests.
+Karl should offer a Kubernetes question instead of producing an unrelated cluster diagnosis. This obvious off-topic request stops in preflight with zero model calls or investigation reads. Background UI refreshes are separate read-only requests.
+
+To show **semantic**, not keyword, screening, use the page's off-topic button or ask:
+
+> Compare Kubernetes to cheese tasting and recommend a dinner menu.
+
+That question contains supported keywords and passes preflight, but the local NeMo semantic policy should block the unrelated task. A Qwen **classifier** call is expected; diagnostic Qwen and cluster reads must remain absent. The checks display their flags, decisions and timings, not an invented confidence percentage.
+
+The reported phrase `debug my kubernetes ass daddy` is rejected by the professional-language preflight. Profanity, sexualized role-play, instruction overrides, concealed/oversized requests, and forbidden autonomous actions are not accepted as operator requests. Ordinary application errors or profanity in logs are still treated as evidence, not operator instructions.
 
 For the instruction-override example, ask:
 
@@ -96,7 +110,9 @@ For the instruction-override example, ask:
 
 The recognized override pattern is blocked before evidence collection and inference. `Hi` gets a local introduction. A conceptual question such as `Explain what a Pod does` takes a separate learning path: Qwen explains the concept without cluster tools or an incident report. Resource-specific troubleshooting still collects live evidence.
 
-This is a transparent, rule-based request gate, **not** a universal semantic classifier. RBAC and the approval broker remain the security boundaries. The output guard checks redaction, mutation commands, and uncertainty markers; it does not prove factual accuracy or relevance.
+The free Apache-licensed **NVIDIA NeMo Guardrails 0.24.1** library enforces input and output rails around the existing local Qwen. No hosted moderation, extra large model, model routing, embedding download, or API key is required. NeMo telemetry is disabled. Additional short classifier calls introduce real latency and are measured separately from diagnosis.
+
+This is a layered demo security design, **not enterprise certification or an unbreakable defense**. Local Qwen is not a dedicated safety-trained model; semantic safety/grounding checks can make mistakes. RBAC and independently authenticated human approvals remain the authority boundaries. Required checks fail closed on timeout, invalid classifier JSON, or unavailable NeMo. See [guardrail policy and evaluation](docs/guardrails.md) before production reuse.
 
 ## 7. Show what happened in MLflow and Grafana
 
@@ -104,10 +120,12 @@ Open **Dashboards → MLflow**, choose **Kravel Guarded Debugger → Traces**, a
 
 - **kravel.debugger**: redacted question, target, response, routing policy, disposition, and whether the model ran.
 - **guardrail.input**: redaction/quarantine decisions and findings.
-- **guardrail.relevance**: policy version, four named checks with reasons, routing decision, latency, `model_skipped`, and `cluster_reads_skipped`.
+- **guardrail.relevance**: fast preflight checks, reasons, policy version, and whether this first stage stopped diagnosis/reads.
+- **guardrail.input.semantic → guardrail.input.classifier**: NeMo enforcement and local meaning/content/instruction decision. Absent when preflight already stopped the request.
+- **guardrail.evidence.semantic → guardrail.evidence.classifier**: injection screening of sanitized evidence before diagnosis; rejects unsafe/unavailable evidence.
 - **qwen.inference**: bounded messages, model response, tool choice, and usage when provided. This span is absent for redirected/blocked questions.
 - **evidence.*** / **tool.***: actual bounded reads and results. These are absent for redirected/blocked questions.
-- **guardrail.output**: generated-output checks for requests that reached Qwen.
+- **guardrail.output → guardrail.output.semantic → guardrail.output.classifier**: output redaction plus response safety/evidence-support checks. Rejected output is withheld and no fix is suggested.
 
 The trace's Summary previews the question and answer. Older traces cannot recover content that was never recorded; make a fresh request after upgrading.
 
@@ -129,7 +147,7 @@ Restore just one lab without clearing the current presentation:
 bash demo/local/scenario.sh reset imagepull
 ```
 
-**Clear this view** on the page hides completed results only. It does not repair or reset Kubernetes, delete traces, or hide active work. Dashboards retain past data; use a recent time range/new trace for the current demo.
+Alternatively, **Reset all labs** in the page restores the fixed lab settings after your dry-run confirmation. Wait for recovery, then **Clear this view** to hide completed results only. This does not delete traces or hide active work. Bash reset also advances the Local Slack presentation boundary; the browser clear button advances only Kravel. Dashboards retain past data; use a recent time range/new trace for the current demo.
 
 Reconnect localhost pages without resetting labs or the presentation:
 

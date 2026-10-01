@@ -71,7 +71,7 @@ def create_server(store, config, kube):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+            self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-src http://127.0.0.1:8082; base-uri 'none'; frame-ancestors 'none'")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
@@ -136,6 +136,8 @@ def create_server(store, config, kube):
                     return self.send_json(200, payload)
                 if path == "/v1/investigations":
                     return self.send_json(200, {"runs": [{k: v for k, v in run.items() if k not in {"payload", "steps"}} for run in store.workflows()]})
+                if path == "/v1/activity":
+                    return self.send_json(200, {"investigationActive": workflows.model_slot.locked(), "verificationActive": any(run["status"] == "running" for run in store.workflows("verification", 100))})
                 if path.startswith("/v1/investigations/"):
                     run = store.workflow(path.split("/")[-1])
                     return self.send_json(200 if run and run["kind"] == "investigation" else 404, run if run and run["kind"] == "investigation" else {"error": "not_found"})

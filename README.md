@@ -11,7 +11,8 @@ The main browser UI renders the live namespace as a navigable WebGL 3D observato
 - Evidence-first LangGraph investigations with evidence IDs, uncertainty, prevention, actual progress, and local run history.
 - A separate least-privilege approval broker restricted to four named Deployments, one named ConfigMap, and one named Service in `kravel-demo`.
 - A beginner-friendly practice guide, on-demand resource inspector, and checkmarked repair checklist driven by actual workflow steps.
-- A traced, rule-based request gate: unrelated questions are redirected and recognized instruction overrides are blocked before model calls or investigation reads.
+- Free local NVIDIA NeMo Guardrails: professional-language/injection preflight, semantic input/evidence/output checks, strict classifier schemas, fail-closed enforcement, and per-check MLflow timing. These reduce risk; they do not certify enterprise security or replace RBAC.
+- Human-only scenario buttons on a separate authenticated localhost controller: fixed lab catalog, server dry-run, 60-second one-use confirmation, stale-state checks, and healthy reset. Karl has no button/tool credential.
 - Local Slack-style approval inbox by default; real Slack reactions are optional.
 - Five-minute approval expiry, structured server dry-run, fixed repair catalog, and an append-only SQLite audit trail.
 - Prometheus, a provisioned Grafana dashboard, and persistent MLflow traces with nested spans for guardrails, Qwen calls, tools, and tracing overhead. Local investigation traces include bounded redacted questions, model messages/responses, evidence, and diagnoses; timing-only mode remains available.
@@ -31,7 +32,9 @@ bash demo/local/demo.sh
 
 Preparation downloads Qwen, builds Kravel, removes obsolete Laya resources, and starts observability. The demo creates five healthy labs and a fresh presentation session, hiding past completed work without deleting retained history. Existing `.cmd` wrappers still work on Windows.
 
-Open the Kravel URL, then break one lab:
+Open the printed private Demo controls link once, then reload Kravel. Click **Try this problem → Break this lab** on a practice card. Use **Reset all labs → Restore healthy labs** to recover the sandbox. Keep private demo/approval links out of recordings and Git.
+
+Optional Bash equivalent:
 
 ```bash
 bash demo/local/scenario.sh break imagepull

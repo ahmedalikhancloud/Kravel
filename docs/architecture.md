@@ -24,7 +24,7 @@ The `kravel-debugger` ServiceAccount can get, list, and watch common non-secret 
 
 The live browser map calls the same read-only API. Its WebGL objects and directional connections come from current Pod, Deployment, ReplicaSet, ConfigMap, and Service lists; they are not a historical reconstruction or simulated topology.
 
-The guided page starts an asynchronous request with one local model slot. Before cluster reads, a redaction/quarantine guard and transparent deterministic scope policy classify it as allow, help, redirect, or reject. Help/redirect/reject return local explanations without constructing a model client or collecting evidence. `guardrail.relevance` records rule results, reasons, policy version, latency, and skipped model/read flags. This is a heuristic request router, not a semantic security guarantee.
+The guided page starts an asynchronous request with one local model slot. Before cluster reads, redaction/quarantine and deterministic preflight (`karl-preflight-v2`) screen requests. Help/redirect/reject return local explanations without model calls or evidence collection. Candidate requests must then pass NVIDIA NeMo Guardrails custom input rails (`karl-layered-v2`): a short, tools-free local Qwen classifier evaluates professional language, instruction integrity, actual domain/task meaning, and learning/investigation mode. Keywords are not final authorization. Schema/errors/timeouts fail closed. Each accepted evidence bundle/tool result passes a separate injection rail before it is used. Final responses pass output safety and evidence-support rails; failed output is withheld and fixes suppressed. See `docs/guardrails.md` for policies and limitations.
 
 For allowed requests, a LangGraph evidence node collects bounded container state, rollout conditions, ownership, configuration, Events, Service selectors, EndpointSlices, and relevant current/previous logs. Failed reads are coverage gaps. Sanitized observations receive evidence IDs before local Qwen synthesis. Clear supported findings need one inference; uncertain findings can trigger one read-only follow-up round. SQLite run/step history records actual transitions and preserves partial evidence if inference fails. No hosted database or model router is used. The UI does not label model prose a guaranteed grounded diagnosis.
 
@@ -44,9 +44,13 @@ The local approval credential exists only in the broker Pod and the localhost UR
 
 The ConfigMap restart annotation is unique to each reviewed proposal, so repeat demonstrations trigger a new rollout. Each operation is tracked separately; partial failure never triggers automatic retry. Patch acceptance is distinct from recovery. The independent read-only observer checks UID, reviewed fields, applied generation, current owned Pods, and readiness three times over at least six seconds, with a separate 90-second deadline. Service recovery requires Ready EndpointSlices targeting the HTTP lab. It does not imply a DNS/TCP probe or guarantee future health.
 
-## Legacy operator service (not part of the guided UI)
+## Human-only demo controls and legacy operator compatibility
 
-The operator backend remains isolated for compatibility, but the guided UI contains no console iframe and the launcher no longer forwards its port by default. Manual demo commands belong in Git Bash. Its third ServiceAccount and separate generated unlock key are never mounted into debugger/broker Pods. An HttpOnly, SameSite=Strict, path-scoped 15-minute session and exact Origin/Host checks protect submissions if separately exposed. No command proxy exists in the debugger API.
+The operator's root page is now a small scenario-button panel embedded from localhost:8082, which the launcher forwards to loopback only. Its third ServiceAccount and separate generated unlock key are never mounted into debugger/broker Pods. Open the printed private fragment link once to grant an HttpOnly, SameSite=Strict, path-scoped 15-minute session, then reload Kravel. The frame can submit only from its exact Origin/Host; the parent has no credential/CORS access and exchanges only height/action-result notifications. No lab mutation proxy or action tool exists in the debugger API.
+
+`LabController` exposes fixed scenario IDs, break-one/reset-all actions, and session-bound dry-run previews. No client resource/command/patch fields are accepted. All resource identities/spec fingerprints are rechecked before any apply, then each patch gets current version preconditions. Changes outside five named Deployments, one ConfigMap and one Service are denied by RBAC. Active investigations/approvals and unavailable activity checks stop the action. Accepted patches are not advertised as observed failure/recovery. Reset leaves stored records intact; users clear the view only after observing health. Multi-object actions can partially succeed and never retry/roll back automatically.
+
+The former console is available only at `/console` for compatibility, not in the guided UI. Manual Bash commands belong in Git Bash.
 
 It is a kubectl-compatible API console, not a Bash/PTY terminal: `shlex` parsing maps reviewed commands to bounded Kubernetes API calls, without launching a process. No host kubeconfig, Docker socket, scripts, plugins, pipes, exec, impersonation, context/credential overrides, or Secrets. Manual edits are restricted by namespace/name RBAC and reviewed fields/values (no arbitrary Pod templates). A write requires server dry-run and a one-use, session-bound 60-second confirmation; identity/spec/version checks reject stale previews.
 
@@ -57,7 +61,8 @@ The debugger, broker, and operator append structured records to separate SQLite 
 Each agent investigation creates an MLflow root span with nested spans for:
 
 - input guardrail;
-- request relevance/scope policy before any investigation reads or model call;
+- fast request preflight before any model call, then NeMo semantic input policy before diagnostic inference or reads;
+- policy-classifier calls in separately named nested spans, including strict flags/reasons, framework/version, and elapsed time;
 - each Qwen inference turn;
 - each read-only Kubernetes tool call;
 - a separate guardrail scan of each tool result before it reaches Qwen;

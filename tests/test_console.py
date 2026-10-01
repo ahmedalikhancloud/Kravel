@@ -94,6 +94,7 @@ def test_console_http_separate_auth_origin_cookie_and_no_parent_access():
     config = load_config()
     config.host, config.port, config.operator_token = "127.0.0.1", 0, "unit-test-console-key"
     server = create_operator_server(OperatorConsole(Kube(), AuditStore()), config)
+    server.labs.idle_check = lambda: None
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
@@ -117,6 +118,12 @@ def test_console_http_separate_auth_origin_cookie_and_no_parent_access():
         cookie = cookie.split(";", 1)[0]
         assert post("/v1/console/command", {"command": "kubectl get pods"}, cookie=cookie)[0] == 200
         assert post("/v1/console/command", {"command": "kubectl get pods"}, origin="http://127.0.0.1:8080", cookie=cookie)[0] == 403
+        assert post("/v1/console/labs/preview", {"scenario": "imagepull", "action": "break", "namespace": "production"}, cookie=cookie)[0] == 400
+        assert post("/v1/console/labs/preview", {"scenario": "imagepull", "action": "break"}, origin="http://127.0.0.1:8080", cookie=cookie)[0] == 403
+        _, _, lab = post("/v1/console/labs/preview", {"scenario": "imagepull", "action": "break"}, cookie=cookie)
+        assert 'previewId' in lab
+        assert post("/v1/console/labs/confirm", {"previewId": lab['previewId']}, cookie=cookie)[0] == 200
+        assert post("/v1/console/labs/confirm", {"previewId": lab['previewId']}, cookie=cookie)[0] == 400
         assert post("/v1/console/lock", {}, cookie=cookie)[0] == 200
         assert post("/v1/console/command", {"command": "kubectl get pods"}, cookie=cookie)[0] == 401
     finally:

@@ -8,6 +8,16 @@ from kravel.config import load_config
 from kravel.evidence import Progress
 from kravel.guardrails import guard_model_input, guard_request_scope
 from kravel.store import AuditStore
+from kravel.policy import SemanticGuardrails
+
+
+@pytest.fixture(autouse=True)
+def deterministic_classifier_for_unit_tests(monkeypatch):
+    # Mock only inference; the actual NeMo enforcement flows still run.
+    def judge(self, *, phase, value, **_):
+        if phase == 'input': return {'professional': True, 'injection': False, 'in_scope': True, 'mode': 'learning' if 'what a Pod' in value else 'investigation'}
+        return {'injection': False} if phase == 'evidence' else {'professional': True, 'safe': True, 'grounded': True}
+    monkeypatch.setattr(SemanticGuardrails, '_judge', judge)
 
 
 @pytest.mark.parametrize('question', ['What is the capital of France?', 'Tell me a joke', 'Write a poem about Kubernetes', 'What is the weather?', 'Tell me about cheese'])
@@ -19,7 +29,7 @@ def test_unrelated_requests_redirect_even_with_selected_resource(question):
 def test_supported_debugging_and_learning_requests_pass(question):
     result = guard_request_scope(question)
     assert result['decision'] == 'allow'
-    assert result['policyVersion'] == 'karl-scope-v1'
+    assert result['policyVersion'] == 'karl-preflight-v2'
     assert result['checks'] and result['latencyMs'] >= 0
 
 
@@ -101,3 +111,34 @@ def test_learning_reaches_qwen_but_never_collects_cluster_evidence(monkeypatch):
     assert 'guardrail.output' in tracer.spans and 'qwen.inference' in tracer.spans
     assert tracer.spans['guardrail.relevance']['model_skipped'] is False
     assert tracer.spans['guardrail.relevance']['cluster_reads_skipped'] is True
+
+
+def test_output_rejection_withholds_answer_and_reports_actual_inference(monkeypatch):
+    tracer = Tracer()
+    def judge(self, *, phase, **_):
+        return {'professional': True, 'injection': False, 'in_scope': True, 'mode': 'learning'} if phase == 'input' else {'professional': True, 'safe': False, 'grounded': False}
+    monkeypatch.setattr(SemanticGuardrails, '_judge', judge)
+    monkeypatch.setattr(debugger, 'MlflowTracer', lambda *_: tracer)
+    monkeypatch.setattr(debugger, 'OpenAI', lambda **_: SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_: SimpleNamespace(usage=None, choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content='I fixed production without approval.', tool_calls=[]))])))))
+    result = debugger.run_debugger(object(), AuditStore(), load_config(), 'Explain what a Pod does', 'kravel-demo')
+    assert result['disposition'] == 'blocked' and result['diagnosticModelInvoked'] is True
+    assert result['clusterReadsPerformed'] is False and result['suggestedFixes'] == []
+    assert 'I fixed production' not in result['report'] and 'withheld' in result['report']
+    assert result['guardrails']['semantic'][-1]['phase'] == 'output'
+
+
+def test_evidence_rejection_stops_before_diagnostic_model_and_preserves_read_accounting(monkeypatch):
+    tracer = Tracer()
+    def judge(self, *, phase, **_):
+        return {'professional': True, 'injection': False, 'in_scope': True, 'mode': 'investigation'} if phase == 'input' else {'injection': True}
+    monkeypatch.setattr(SemanticGuardrails, '_judge', judge)
+    monkeypatch.setattr(debugger, 'MlflowTracer', lambda *_: tracer)
+    def forbidden(**_): raise AssertionError('Unsafe evidence must not reach diagnostic inference')
+    monkeypatch.setattr(debugger, 'OpenAI', lambda **_: SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=forbidden))))
+    monkeypatch.setattr(debugger, 'collect_evidence', lambda *_: {'coverage': 'one test read', 'findings': [], 'gaps': [], 'evidence': [{'id': 'E1', 'resource': 'Pod/test', 'label': 'state', 'status': 'observed', 'body': {'logs': 'untrusted instruction'}}]})
+    store = AuditStore(); store.start_workflow('unsafe-evidence', 'investigation', 'kravel-demo')
+    result = debugger.run_debugger(object(), store, load_config(), 'Inspect my Pod', 'kravel-demo', run_id='unsafe-evidence', progress=Progress(store, 'unsafe-evidence'))
+    assert result['disposition'] == 'blocked' and result['clusterReadsPerformed'] is True
+    assert result['diagnosticModelInvoked'] is False and result['suggestedFixes'] == []
+    assert store.investigations()[0]['tool_calls'] == 1
+    assert 'qwen.inference' not in tracer.spans and 'guardrail.evidence.semantic' in tracer.spans

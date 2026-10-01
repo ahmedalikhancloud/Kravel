@@ -16,7 +16,8 @@ Kravel is intentionally a debugger first and a tightly bounded demo repair workf
 - The approval token is not mounted into the debugger and is removed from the Local Slack address bar after page load.
 - Port-forwards bind to `127.0.0.1`; no inbound internet endpoint is needed.
 - Slack tokens, when used, come from environment variables and a Kubernetes Secret. They are never embedded in manifests or source.
-- The legacy operator backend has its own origin, Pod, ServiceAccount, unlock key, and database. It is absent from the guided UI and has no default launcher port-forward. Karl has no console tool or credential. If separately exposed, submissions require authenticated sessions and exact Origin/Host checks, with no cross-origin command access.
+- The human demo controller has its own origin (`127.0.0.1:8082`), Pod, ServiceAccount, unlock key, and database. Its scenario-only panel is embedded cross-origin; Karl has no lab/console tool or credential. Submissions require authenticated HttpOnly, SameSite=Strict sessions and exact Origin/Host checks. No cross-origin command access or debugger mutation proxy exists. The parent receives only bounded height and action-result notifications, never credentials or commands.
+- Scenario buttons accept only fixed IDs/actions from `kravel/labs.py`, not resource names, namespaces, commands, patches, or URLs. They require server dry-run and one-use, session-bound confirmation within 60 seconds, revalidate all identities/specs before the first write, and use resourceVersion preconditions on each patch. Missing activity checks or active investigations/approvals block changes. Partial failure is reported, not rolled back or silently retried.
 - Console commands map to bounded API calls, never a subprocess or host shell. Manual patch fields/values are allowlisted in addition to RBAC. Writes require session-bound, one-use dry-run confirmation within 60 seconds and reject stale identities/specifications.
 - An API patch response is only acceptance. A read-only observer reports recovery, timeout, or interruption, without rollback or mutation retries.
 
@@ -24,7 +25,7 @@ Kravel is intentionally a debugger first and a tightly bounded demo repair workf
 
 - A read-only agent can still see non-secret workload fields, ConfigMap data, logs, and Events. Do not put credentials in those locations.
 - Kubernetes RBAC is the ultimate control boundary. Review `deploy/local.yaml` before adapting Kravel to a real cluster.
-- The request-scope gate is a transparent deterministic heuristic, not a complete semantic classifier or prompt-injection defense. It can misclassify unusual wording. Output redaction, mutation-command withholding, and uncertainty-marker checks do not establish factual grounding. Security does not depend on the model following these checks.
+- NeMo Guardrails enforces custom input/output rails using local Qwen semantic checks in addition to deterministic preflight/redaction/tool restrictions. Required checks fail closed on unavailable framework/model, timeout, malformed/unknown classifier fields, incomplete output, or missing rail execution. See `docs/guardrails.md`. Semantic classifiers can be attacked or misclassify; Qwen is not a specialized moderation model. Model-based grounding review is not factual proof. Security does not depend on classifier obedience.
 - Fresh presentation sessions hide completed history, not audit records or MLflow traces, and cannot hide active work. Clearing the view is not a cluster reset or data deletion.
 - The bundled repair catalog is for the disposable `kravel-demo` namespace. Do not widen its namespace, resource names, or verbs without a separate security review.
 - Local Slack is a demo of the approval workflow, not a replacement for enterprise identity, retention, or separation-of-duties controls.
@@ -36,7 +37,7 @@ Kravel is intentionally a debugger first and a tightly bounded demo repair workf
 
 ## Real Slack scopes
 
-Use a dedicated bot with only `chat:write` and `reactions:read`, invite it only to the approval channel, and rotate the token after a public demonstration. Never commit `.env` files, Kubernetes Secret output, the Local Slack URL, or `.kravel-local-state.env`.
+Use a dedicated bot with only `chat:write` and `reactions:read`, invite it only to the approval channel, and rotate the token after a public demonstration. Never commit `.env` files, Kubernetes Secret output, private Local Slack/Demo controls links, or `.kravel-local-state.env`. Both generated unlock credentials are removed from address bars after page load; do not save them in chat or screen recordings. NeMo usage telemetry is explicitly disabled and embedding downloads are offline; classifiers call only the configured local model endpoint.
 
 ## Production hardening before reuse
 

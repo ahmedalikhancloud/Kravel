@@ -2,8 +2,18 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 import kravel.debugger as debugger
+import pytest
+from kravel.policy import SemanticGuardrails
 from kravel.config import load_config
 from kravel.store import AuditStore
+
+
+@pytest.fixture(autouse=True)
+def deterministic_classifier_for_unit_tests(monkeypatch):
+    def judge(self, *, phase, **_):
+        if phase == 'input': return {'professional': True, 'injection': False, 'in_scope': True, 'mode': 'investigation'}
+        return {'injection': False} if phase == 'evidence' else {'professional': True, 'safe': True, 'grounded': True}
+    monkeypatch.setattr(SemanticGuardrails, '_judge', judge)
 
 
 class Span:

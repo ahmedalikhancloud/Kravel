@@ -53,6 +53,15 @@ def test_operator_identity_is_separate_and_not_in_guided_ui():
     api = (ROOT / "kravel" / "api.py").read_text(encoding="utf-8")
     assert "/v1/console/command" not in api
     html = (ROOT / "kravel" / "web" / "index.html").read_text(encoding="utf-8")
-    assert '<iframe' not in html and 'id="auditTrail"' not in html
+    assert 'id="labControls"' in html and 'id="auditTrail"' not in html
+    assert 'src="http://127.0.0.1:8082/"' in html
+    lab_js = (ROOT / "kravel" / "web" / "labs.js").read_text(encoding="utf-8")
+    assert "innerHTML" not in lab_js and "localStorage" not in lab_js
+    assert 'labs/preview' in lab_js and 'labs/confirm' in lab_js
+    assert 'confirm' in lab_js and 'history.replaceState' in lab_js
+    app_js = (ROOT / "kravel" / "web" / "app.js").read_text(encoding="utf-8")
+    assert "kravel-lab-parent-ready" in lab_js and "kravel-lab-parent-ready" in app_js
+    assert 'event.source === window.parent' in lab_js
+    assert 'event.source !== elements.labControls.contentWindow' in app_js
     assert 'id="runSteps"' in html and 'id="demoGuide"' in html
     assert 'Human console' not in html and 'Audit trail' not in html

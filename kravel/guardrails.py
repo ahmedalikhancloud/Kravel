@@ -10,17 +10,19 @@ from .utils import stable_json
 SECRET_PATTERNS = [
     ("provider_credential", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gsk_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{15,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b")),
     ("url_credential", re.compile(r"(?i)(https?://)[^/\s:@]+:[^/\s@]+@")),
-    ("url_token", re.compile(r"(?i)([?&](?:token|key|secret|signature|api_key)=)[^&\s]+")),
+    ("url_token", re.compile(r"(?i)([?#&](?:token|key|secret|signature|api_key)=)[^&\s]+")),
     ("private_key", re.compile(r"-----BEGIN [^-\r\n]{0,40}PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]{0,40}PRIVATE KEY-----", re.I)),
     ("bearer_token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}", re.I)),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")),
-    ("credential_assignment", re.compile(r"\b(api[_-]?key|password|passwd|access[_-]?token|client[_-]?secret)[\"']?\s*[:=]\s*[\"']?[^\s\"',;]{4,}", re.I)),
+    ("credential_assignment", re.compile(r"\b(api[_-]?key|password|passwd|(?:access|operator|approval)[_-]?token|token|client[_-]?secret)[\"']?\s*[:=]\s*[\"']?[^\s\"',;]{4,}", re.I)),
 ]
 INSTRUCTION_PATTERNS = [
     re.compile(r"ignore (?:all |any )?(?:previous|prior) instructions", re.I),
     re.compile(r"(?:reveal|print|return).{0,30}(?:system prompt|developer message|hidden instruction)", re.I),
     re.compile(r"(?:you are now|act as) (?:an? )?(?:assistant|system|administrator|root)", re.I),
     re.compile(r"</?(?:tool_call|system|assistant|developer)>", re.I),
+    re.compile(r"(?:ignore|bypass|disregard|override|disable).{0,35}(?:instructions|guardrails|safety|policy|rules)", re.I),
+    re.compile(r"(?:system|developer)\s*(?:message|prompt)\s*:", re.I),
 ]
 
 
@@ -30,7 +32,7 @@ def _ms(started):
 
 def _normalize(value) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).replace("\r\n", "\n").replace("\r", "\n")
-    return "".join(char for char in text if char in "\n\t" or ord(char) >= 32)
+    return "".join(char for char in text if char in "\n\t" or ord(char) >= 32 and unicodedata.category(char) != "Cf")
 
 
 def _redact(text: str):
@@ -45,6 +47,8 @@ def _redact(text: str):
 def guard_model_input(value, target: str, max_characters: int = 20_000):
     started = time.perf_counter()
     text, findings = _redact(_normalize(value))
+    if any(unicodedata.category(char) == "Cf" for char in str(value or "")):
+        findings.append({"code": "invisible_characters", "count": 1})
     lines, quarantined = [], 0
     for line in text.split("\n"):
         if any(pattern.search(line) for pattern in INSTRUCTION_PATTERNS):
@@ -64,7 +68,7 @@ def guard_model_input(value, target: str, max_characters: int = 20_000):
 
 
 def guard_request_scope(question, *, target="", input_findings=None):
-    """Transparent, conservative request routing. Not a semantic safety classifier.
+    """Fast preflight only: passing is NOT authorization to call the debugger.
 
     A selected object can clarify an otherwise vague debugging request, but cannot
     override an injection or turn a creative/unrelated task into an investigation.
@@ -72,6 +76,11 @@ def guard_request_scope(question, *, target="", input_findings=None):
     """
     started = time.perf_counter()
     text = _normalize(question).strip()
+    # Professional-language policy is intentional and configurable in source.
+    # Word boundaries avoid false positives such as assets, class, and assassin.
+    lexical = text.lower().translate(str.maketrans({"@": "a", "$": "s", "0": "o", "1": "i", "3": "e"}))
+    inappropriate = bool(re.search(r"\b(?:ass|asshole|fuck\w*|shit\w*|bitch\w*|cunt\w*|dick|pussy|slut\w*)\b", lexical))
+    unsafe_encoding = any(f.get("code") in {"invisible_characters", "input_truncated"} for f in input_findings or [])
     injection = any(f.get("code") == "prompt_injection_pattern" for f in input_findings or [])
     help_request = bool(re.fullmatch(r"(?:hi|hello|hey|thanks|thank you|help|help me|what can you do|how do i use (?:you|kravel)|how does (?:this|kravel) work)[.!?\s]*", text, re.I))
     unrelated_task = bool(re.search(r"\b(?:joke|poem|story|recipe|weather|capital of|football|horoscope)\b", text, re.I))
@@ -84,10 +93,15 @@ def guard_request_scope(question, *, target="", input_findings=None):
         {"rule": "supported_task", "passed": not unrelated_task, "reason": "Unrelated or creative task requested." if unrelated_task else "No recognized unrelated task pattern."},
         {"rule": "kubernetes_context", "passed": scope, "reason": "Kubernetes term or selected-resource context found." if scope else "No Kubernetes context found."},
         {"rule": "debug_or_learning_intent", "passed": intent, "reason": "Inspection, debugging, or learning intent found." if intent else "No supported intent found; ask a specific question."},
+        {"rule": "professional_language", "passed": not inappropriate, "reason": "Profane or sexualized language is not accepted in operator requests." if inappropriate else "No recognized profane wording; semantic checks follow for candidate requests."},
+        {"rule": "bounded_visible_input", "passed": not unsafe_encoding, "reason": "Hidden formatting or oversized input is not accepted." if unsafe_encoding else "Input is bounded and visible."},
     ]
     if injection:
         decision, code = "reject", "instruction_override"
         reason = "The request contains an instruction-override pattern. Nothing was sent to Qwen or read from the cluster."
+    elif inappropriate or unsafe_encoding:
+        decision, code = "reject", "professional_language" if inappropriate else "unsafe_encoding"
+        reason = "Please use a clear, professional Kubernetes question without profanity, sexualized language, hidden formatting, or oversized content."
     elif help_request:
         decision, code = "help", "assistant_help"
         reason = "Greeting or help request; a local introduction is sufficient."
@@ -97,7 +111,7 @@ def guard_request_scope(question, *, target="", input_findings=None):
     else:
         decision, code = "allow", "supported_kubernetes_request"
         reason = "The request matches the supported Kubernetes debugging or learning scope."
-    return {"decision": decision, "requestMode": "learning" if decision == "allow" and learning else "investigation" if decision == "allow" else "local_reply", "reasonCode": code, "reason": reason, "checks": checks, "policyVersion": "karl-scope-v1", "implementation": "deterministic_rules", "latencyMs": _ms(started)}
+    return {"decision": decision, "requestMode": "learning" if decision == "allow" and learning else "investigation" if decision == "allow" else "local_reply", "reasonCode": code, "reason": reason, "checks": checks, "policyVersion": "karl-preflight-v2", "implementation": "deterministic_preflight", "latencyMs": _ms(started)}
 
 
 def guard_debugger_output(value, max_characters: int = 12_000):

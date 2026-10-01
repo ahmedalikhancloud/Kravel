@@ -290,8 +290,10 @@ class OperatorConsole:
 
 
 def create_operator_server(console, config):
+    from .labs import LabController, CATALOG
+    labs = LabController(console)
     sessions, failures, lock = {}, {}, threading.Lock()
-    assets = {"/": ("operator.html", "text/html"), "/ui/operator.js": ("operator.js", "text/javascript"), "/ui/operator.css": ("operator.css", "text/css")}
+    assets = {"/": ("labs.html", "text/html"), "/console": ("operator.html", "text/html"), "/ui/operator.js": ("operator.js", "text/javascript"), "/ui/operator.css": ("operator.css", "text/css"), "/ui/labs.js": ("labs.js", "text/javascript"), "/ui/labs.css": ("labs.css", "text/css")}
     root = Path(__file__).resolve().parent / "web"
 
     class Handler(BaseHTTPRequestHandler):
@@ -343,6 +345,10 @@ def create_operator_server(console, config):
                 self.end_headers(); self.wfile.write(body); return
             if path == "/v1/console/session":
                 return self.send(200, {"unlocked": bool(self.session()), "namespace": NAMESPACE})
+            if path == "/v1/console/labs":
+                if not self.session():
+                    return self.send(401, {"error": "Unlock human demo controls first"})
+                return self.send(200, {"scenarios": CATALOG, "namespace": NAMESPACE})
             return self.send(404, {"error": "not_found"})
 
         def do_POST(self):
@@ -390,9 +396,19 @@ def create_operator_server(console, config):
                     return self.send(200, console.command(body.get("command", ""), session))
                 if path == "/v1/console/confirm":
                     return self.send(200, console.confirm(str(body.get("previewId", "")), session))
+                if path == "/v1/console/labs/preview":
+                    if set(body) != {"scenario", "action"}:
+                        raise ValueError("Only fixed scenario/action fields are accepted")
+                    return self.send(200, labs.preview(body["scenario"], body["action"], session))
+                if path == "/v1/console/labs/confirm":
+                    if set(body) != {"previewId"}:
+                        raise ValueError("Only a reviewed previewId is accepted")
+                    return self.send(200, labs.confirm(str(body["previewId"]), session))
                 return self.send(404, {"error": "not_found"})
             except Exception as exc:
                 console.store.record("operator", "console.denied", actor="manual-human", outcome="denied", details={"errorType": type(exc).__name__})
                 return self.send(400, {"error": public_evidence(str(exc))})
 
-    return ThreadingHTTPServer((config.host, config.port), Handler)
+    server = ThreadingHTTPServer((config.host, config.port), Handler)
+    server.labs = labs
+    return server

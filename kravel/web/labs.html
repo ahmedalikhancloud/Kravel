@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kravel · Human demo controls</title><link rel="stylesheet" href="/ui/labs.css"><script defer src="/ui/labs.js"></script></head>
+<body>
+  <div class="controls-heading"><span>⌾ HUMAN-ONLY PRACTICE CONTROLS</span><button id="lock" hidden>Lock controls</button></div>
+  <section id="unlockSection" class="unlock"><h3>Unlock your practice buttons once</h3><p>Open the private <b>Demo controls</b> link printed by the launcher, or paste its demo key here. It stays with this separate controller—never Karl. Sessions last 15 minutes.</p><form id="unlockForm"><label for="key" class="sr-only">Private demo unlock key</label><input id="key" type="password" autocomplete="off" placeholder="Private demo unlock key" required><button type="submit">Unlock practice</button></form></section>
+  <p id="status" role="status" aria-live="polite">Checking demo controls…</p>
+  <div id="cards" class="cards" aria-label="Independent practice scenarios"></div>
+  <div class="reset-row"><div><b>Ready for another round?</b><p>Restore all five labs to their healthy settings. Nothing outside kravel-demo is touched.</p></div><button id="reset" disabled>↻ Reset all labs</button></div>
+  <section id="preview" class="preview" hidden tabindex="-1" aria-labelledby="previewTitle"><span class="eyebrow">REVIEW BEFORE CHANGING YOUR SANDBOX</span><h3 id="previewTitle"></h3><p id="previewNote"></p><ul id="operations"></ul><details><summary>Inspect the server dry-run</summary><pre id="dryRun"></pre></details><p id="deadline"></p><div class="preview-actions"><button id="cancel">Cancel</button><button id="confirm" class="primary">Confirm lab change</button></div></section>
+  <p class="footnote">These buttons make real, fixed Kubernetes changes. Karl cannot press them. Your proposed repairs still use the separate human approval inbox.</p>
+</body></html>
