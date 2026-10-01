@@ -16,6 +16,13 @@ def _integer(name: str, fallback: int) -> int:
         raise ValueError(f"{name} must be an integer") from exc
 
 
+def _trace_content_mode() -> str:
+    mode = os.getenv("KRAVEL_MLFLOW_CONTENT_MODE", "metadata")
+    if mode not in {"metadata", "redacted"}:
+        raise ValueError("KRAVEL_MLFLOW_CONTENT_MODE must be metadata or redacted")
+    return mode
+
+
 @dataclass(slots=True)
 class KubeConfig:
     host: str = ""
@@ -48,6 +55,7 @@ class Config:
     slack_channel_id: str
     operator_token: str = ""
     operator_url: str = ""
+    mlflow_content_mode: str = "metadata"
     kube: KubeConfig = field(default_factory=KubeConfig)
 
 
@@ -75,6 +83,7 @@ def load_config() -> Config:
         slack_channel_id=os.getenv("SLACK_CHANNEL_ID", ""),
         operator_token=os.getenv("KRAVEL_OPERATOR_TOKEN", ""),
         operator_url=os.getenv("KRAVEL_OPERATOR_URL", ""),
+        mlflow_content_mode=_trace_content_mode(),
         kube=KubeConfig(
             host=os.getenv("KUBERNETES_SERVICE_HOST", ""),
             port=_integer("KUBERNETES_SERVICE_PORT_HTTPS", 443),

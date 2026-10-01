@@ -64,4 +64,4 @@ Repetitive API bookkeeping is removed only from model evidence, and the conversa
 
 ## State and reset
 
-Audit records, bounded sanitized investigation observations/reports, workflow steps, and trace metadata are persisted locally. Kravel has no state-rewind or time-travel database. `scenario.sh` changes one disposable workload at a time; `reset.sh` reapplies five healthy labs without restarting observability. Investigations/verification interrupted by restart are marked interrupted, never replayed automatically.
+Audit records, bounded sanitized investigation observations/reports, workflow steps, and traces are persisted locally. The demo enables bounded redacted investigation content in MLflow; general configuration and repair traces default to metadata-only. Kravel has no state-rewind or time-travel database. `scenario.sh` changes one disposable workload at a time; `reset.sh` reapplies five healthy labs without restarting observability. Investigations/verification interrupted by restart are marked interrupted, never replayed automatically.

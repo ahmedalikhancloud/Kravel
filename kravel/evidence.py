@@ -36,8 +36,10 @@ def collect_evidence(kube, namespace, progress, tracer, target=""):
         with progress.step(key, label, {"resource": resource}) as details:
             try:
                 with tracer.span(f"evidence.{key}", "TOOL", {"namespace": namespace}) as span:
+                    span.set_content_inputs({"label": label, "resource": resource, "read_limit": 100 if not key.startswith("logs_") else 60})
                     result = call()
                     span.set_outputs({"status": "success"})
+                    span.set_content_outputs({"result": result})
                 body, outcome = public_evidence(result), "observed"
             except Exception as exc:
                 body, outcome = {"error": public_evidence(str(exc))}, "unavailable"

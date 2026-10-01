@@ -22,6 +22,6 @@ The separate operator database records sanitized manual read/preview commands, e
 
 Audit entries include timestamp, component, action, actor, resource, outcome, duration, trace ID, and structured details. They exclude ServiceAccount/Slack tokens, approval/console credentials, raw LLM prompts, and full log bodies. A separate local workflow table retains bounded sanitized investigation evidence, including log excerpts; treat these files as potentially sensitive. SQLite is not a tamper-proof audit sink.
 
-The browser exposes a merged read-only view at `/v1/audit`. Each component exposes Prometheus counters at `/metrics`. Investigation spans are sent to MLflow as metadata-only nested traces.
+The browser exposes a merged read-only view at `/v1/audit`. Each component exposes Prometheus counters at `/metrics`. The local manifest opts into bounded redacted investigation content in nested MLflow traces: question, selected resource, model request/response, tool observations, guardrail decisions, and final diagnosis. This is separate from metadata-only audit entries. Set `KRAVEL_MLFLOW_CONTENT_MODE=metadata` to omit this content from new traces; raw capture is unsupported. Existing traces are not backfilled. Repair review/execution/verification traces remain metadata-only.
 
 For a real deployment, forward these records to an append-only external store before granting the broker any broader authority.

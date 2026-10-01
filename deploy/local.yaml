@@ -162,6 +162,7 @@ spec:
             - {name: KRAVEL_LLM_TIMEOUT_SECONDS, value: "90"}
             - {name: KRAVEL_MLFLOW_URL, value: "http://kravel-mlflow.kravel-observability.svc.cluster.local:5000"}
             - {name: KRAVEL_MLFLOW_EXPERIMENT, value: "Kravel Guarded Debugger"}
+            - {name: KRAVEL_MLFLOW_CONTENT_MODE, value: "redacted"}
           ports:
             - {name: http, containerPort: 8080}
           readinessProbe:

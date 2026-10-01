@@ -16,6 +16,10 @@ class Tracer:
         yield self
     def set_outputs(self, *_):
         pass
+    def set_content_inputs(self, *_):
+        pass
+    def set_content_outputs(self, *_):
+        pass
 
 
 class EvidenceKube:

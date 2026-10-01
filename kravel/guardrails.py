@@ -8,12 +8,13 @@ from .utils import stable_json
 
 
 SECRET_PATTERNS = [
+    ("provider_credential", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gsk_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{15,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b")),
     ("url_credential", re.compile(r"(?i)(https?://)[^/\s:@]+:[^/\s@]+@")),
     ("url_token", re.compile(r"(?i)([?&](?:token|key|secret|signature|api_key)=)[^&\s]+")),
     ("private_key", re.compile(r"-----BEGIN [^-\r\n]{0,40}PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]{0,40}PRIVATE KEY-----", re.I)),
     ("bearer_token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}", re.I)),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")),
-    ("credential_assignment", re.compile(r"\b(api[_-]?key|password|passwd|access[_-]?token|client[_-]?secret)\s*[:=]\s*[\"']?[^\s\"',;]{4,}", re.I)),
+    ("credential_assignment", re.compile(r"\b(api[_-]?key|password|passwd|access[_-]?token|client[_-]?secret)[\"']?\s*[:=]\s*[\"']?[^\s\"',;]{4,}", re.I)),
 ]
 INSTRUCTION_PATTERNS = [
     re.compile(r"ignore (?:all |any )?(?:previous|prior) instructions", re.I),

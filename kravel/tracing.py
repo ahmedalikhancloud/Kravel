@@ -1,9 +1,44 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import json
+import re
 import time
 
-from .utils import safe_service_url
+from .guardrails import public_evidence
+from .utils import safe_service_url, stable_json
+
+
+def trace_content(value, max_characters=24_000):
+    """Bounded, best-effort redaction, including serialized tool args and env values."""
+    sensitive = re.compile(r"(?i)password|passwd|token|secret|api.?key|authorization|credential")
+
+    def clean(item, depth=0):
+        if depth > 12:
+            return "[trace nesting limit]"
+        if isinstance(item, dict):
+            named_credential = sensitive.search(str(item.get("name", "")))
+            return {str(k)[:200]: "<redacted:sensitive_field>" if sensitive.search(str(k)) or named_credential and k == "value" else clean(v, depth+1) for k, v in list(item.items())[:80]}
+        if isinstance(item, list):
+            return [clean(v, depth+1) for v in item[:100]]
+        if isinstance(item, str):
+            if len(item) <= 32_000 and item.lstrip().startswith(("{", "[")):
+                try:
+                    parsed = json.loads(item)
+                    if isinstance(parsed, (dict, list)):
+                        return public_evidence(stable_json(clean(parsed, depth+1)))
+                except (ValueError, RecursionError):
+                    pass
+            return public_evidence(item)
+        if item is None or isinstance(item, (bool, int, float)):
+            return item
+        return "[unsupported trace value]"
+
+    safe = clean(value)
+    encoded = stable_json(safe)
+    if len(encoded) > max_characters:
+        return {"content_truncated": True, "redacted_excerpt": encoded[:max_characters-200], "note": "Sanitized span content capped at 24,000 characters; individual text fields are also bounded."}
+    return safe
 
 
 class _NullSpan:
@@ -18,32 +53,63 @@ class _NullSpan:
     def set_attribute(self, _key, _value):
         pass
 
+    def set_content_inputs(self, _value):
+        pass
+
+    def set_content_outputs(self, _value):
+        pass
+
 
 class _MeasuredSpan:
     def __init__(self, live, tracer):
         self.live, self.tracer = live, tracer
+        self.inputs, self.outputs = {}, {}
 
     def _call(self, name, *args):
         started = time.perf_counter()
         try:
             return getattr(self.live, name)(*args)
+        except Exception as exc:
+            self.tracer.error = type(exc).__name__
         finally:
             self.tracer.overhead_ms += (time.perf_counter() - started) * 1000
 
     def set_inputs(self, value):
-        return self._call("set_inputs", value)
+        self.inputs.update(value)
+        return self._call("set_inputs", self.inputs)
 
     def set_outputs(self, value):
-        return self._call("set_outputs", value)
+        self.outputs.update(value)
+        return self._call("set_outputs", self.outputs)
+
+    def _content(self, value, direction):
+        if self.tracer.content_mode != "redacted":
+            return
+        started = time.perf_counter()
+        try:
+            safe = trace_content(value)
+        except Exception as exc:
+            safe = {"content_unavailable": type(exc).__name__}
+        self.tracer.overhead_ms += (time.perf_counter()-started)*1000
+        return getattr(self, f"set_{direction}")(safe)
+
+    def set_content_inputs(self, value):
+        return self._content(value, "inputs")
+
+    def set_content_outputs(self, value):
+        return self._content(value, "outputs")
 
     def set_attribute(self, key, value):
         return self._call("set_attribute", key, value)
 
 
 class MlflowTracer:
-    """Best-effort MLflow trace exporter with metadata-only span payloads."""
+    """Best-effort exporter; local demos can opt into bounded redacted content."""
 
-    def __init__(self, url: str, experiment: str):
+    def __init__(self, url: str, experiment: str, content_mode: str = "metadata"):
+        if content_mode not in {"metadata", "redacted"}:
+            raise ValueError("Unknown MLflow trace content mode")
+        self.content_mode = content_mode
         self.url = safe_service_url(url, "MLflow") if url else ""
         self.experiment = experiment
         self.enabled = bool(self.url)
@@ -62,7 +128,7 @@ class MlflowTracer:
                 self._mlflow = mlflow
             except Exception as exc:  # tracing must never break the debugger path
                 self.enabled = False
-                self.error = str(exc)
+                self.error = type(exc).__name__
         self.setup_ms = (time.perf_counter() - started) * 1000
 
     @contextmanager
@@ -78,6 +144,7 @@ class MlflowTracer:
             live = manager.__enter__()
             self.overhead_ms += (time.perf_counter() - started) * 1000
             measured = _MeasuredSpan(live, self)
+            measured.set_attribute("kravel.content_mode", self.content_mode)
             if inputs is not None:
                 measured.set_inputs(inputs)
             for key, value in (attributes or {}).items():
@@ -86,14 +153,24 @@ class MlflowTracer:
             if current_id and not self.trace_id:
                 self.trace_id = str(current_id)
         except Exception as exc:
-            self.error = str(exc)
+            self.error = type(exc).__name__
+            if manager is not None and live is not None:
+                try:
+                    manager.__exit__(None, None, None)
+                except Exception:
+                    pass
             yield _NullSpan()
             return
         try:
             yield measured
         except BaseException as exc:
             started = time.perf_counter()
-            manager.__exit__(type(exc), exc, exc.__traceback__)
+            # Never export an unguarded exception message or raw stack locals.
+            safe_error = RuntimeError(str(public_evidence(str(exc))) if self.content_mode == "redacted" else type(exc).__name__)
+            try:
+                manager.__exit__(RuntimeError, safe_error, None)
+            except Exception as export_error:
+                self.error = type(export_error).__name__
             self.overhead_ms += (time.perf_counter() - started) * 1000
             raise
         else:
@@ -111,5 +188,22 @@ class MlflowTracer:
         try:
             self._mlflow.flush_trace_async_logging()
         except Exception as exc:
-            self.error = str(exc)
+            self.error = type(exc).__name__
         return (time.perf_counter() - started) * 1000
+
+    def set_previews(self, *, question=None, diagnosis=None):
+        """Human-readable trace-list previews, only when content recording is enabled."""
+        if not self.enabled or self._mlflow is None or self.content_mode != "redacted":
+            return
+        started = time.perf_counter()
+        try:
+            previews = {}
+            for key, value in (("request_preview", question), ("response_preview", diagnosis)):
+                if value is not None:
+                    safe = trace_content(str(value))
+                    previews[key] = safe[:950] + ("\n[preview truncated; inspect span fields]" if len(safe) > 950 else "")
+            self._mlflow.update_current_trace(**previews)
+        except Exception as exc:
+            self.error = type(exc).__name__
+        finally:
+            self.overhead_ms += (time.perf_counter()-started)*1000

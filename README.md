@@ -13,7 +13,7 @@ The main browser UI renders the live namespace as a navigable WebGL 3D observato
 - An embedded human-only kubectl-compatible console with separate authentication. It is not a Bash shell or agent tool; manual writes require dry-run + explicit confirmation.
 - Local Slack-style approval inbox by default; real Slack reactions are optional.
 - Five-minute approval expiry, structured server dry-run, fixed repair catalog, and an append-only SQLite audit trail.
-- Prometheus, a provisioned Grafana dashboard, and persistent MLflow traces with nested spans for guardrails, Qwen calls, tools, and tracing overhead.
+- Prometheus, a provisioned Grafana dashboard, and persistent MLflow traces with nested spans for guardrails, Qwen calls, tools, and tracing overhead. Local investigation traces include bounded redacted questions, model messages/responses, evidence, and diagnoses; timing-only mode remains available.
 - Independent OOMKilled, ImagePullBackOff, CrashLoopBackOff, bad ConfigMap, and Service-selector mismatch labs, with a working HTTP workload.
 - No Groq, Codespaces, hosted model, public callback URL, or API key required.
 

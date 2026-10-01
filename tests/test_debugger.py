@@ -7,7 +7,19 @@ from kravel.store import AuditStore
 
 
 class Span:
+    def __init__(self):
+        self.inputs, self.outputs = {}, {}
+
     def set_outputs(self, value):
+        self.outputs.update(value)
+
+    def set_content_inputs(self, value):
+        self.inputs.update(value)
+
+    def set_content_outputs(self, value):
+        self.outputs.update(value)
+
+    def set_attribute(self, *_):
         pass
 
 
@@ -17,14 +29,20 @@ class FakeTracer:
 
     def __init__(self, *_):
         self.names = []
+        self.spans = {}
 
     @contextmanager
     def span(self, name, *_):
         self.names.append(name)
-        yield Span()
+        span = Span()
+        self.spans[name] = span
+        yield span
 
     def flush(self):
         return 0
+
+    def set_previews(self, **_):
+        pass
 
 
 def response(content, calls=None):
@@ -71,6 +89,10 @@ def test_tool_evidence_is_guarded_and_cross_namespace_calls_fail_safely(monkeypa
     assert tracer.names.count("guardrail.tool_evidence") == 2
     assert result["timings"]["inputGuardrailMs"] > 0
     assert any(item["action"] == "tool.get_pods" and item["outcome"] == "error" for item in store.audit_entries())
+    assert tracer.spans["kravel.debugger"].inputs["question"] == "Inspect the crash"
+    assert tracer.spans["kravel.debugger"].outputs["diagnosis"] == result["report"]
+    assert tracer.spans["qwen.inference"].inputs["messages"] == requests[-1]["messages"]
+    assert tracer.spans["tool.pod_logs"].inputs["arguments"]["pod"] == "crash-demo-a"
 
 
 def test_context_budget_preserves_protocol_and_recent_evidence():
@@ -105,3 +127,5 @@ def test_prefetched_strong_evidence_uses_one_guarded_synthesis_call(monkeypatch)
     assert len(requests) == 1 and result["suggestedFixes"][0]["id"] == "fix_service_selector"
     assert "guardrail.collected_evidence" in tracer.names
     assert result["evidence"] and result["mutationExecuted"] is False
+    assert tracer.spans["evidence.services"].outputs["result"]["items"]
+    assert tracer.spans["kravel.debugger"].inputs["selected_resource"] == "Service/demo-gateway"

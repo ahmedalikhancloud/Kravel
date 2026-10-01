@@ -124,7 +124,16 @@ In Grafana, open **Kravel Guarded Debugger**. Useful panels include:
 - mean actual evidence/guardrail/repair/approval/verification stage timings;
 - recovery outcomes and separately audited manual operator actions.
 
-In MLflow, open the **Kravel Guarded Debugger** experiment, then an investigation trace. The agent root contains input guardrail, initial evidence reads, collected-evidence guardrail, Qwen inference, focused follow-up tools, output guardrail, and final issue discovery. Repair review, application (with individual operation spans), and recovery observation have separate traces linked by proposal ID. Span inputs/outputs contain metadata, not raw prompts/logs or credentials. Input-guardrail timing includes question and evidence scans. Actual stage timings appear in the cockpit and Grafana.
+In MLflow, open the **Kravel Guarded Debugger** experiment, select **Traces**, and open a **new** investigation trace. The trace list previews the redacted question and diagnosis. The **Summary** shows root inputs/outputs; expand **Show more** for additional fields. Use **Details & Timeline** to select these spans and inspect their **Inputs / Outputs**:
+
+- **kravel.debugger**: your redacted question, namespace, selected resource, model, final diagnosis, structured findings, and suggested fix IDs.
+- **qwen.inference**: bounded redacted messages sent to Qwen, available tool names, tool choice, response, finish reason, and numeric usage counts when the model supplies them.
+- **evidence.*** and **tool.***: resource/read parameters and bounded redacted results, including relevant log excerpts.
+- **guardrail.***: decisions, finding codes, sanitized evidence or diagnosis, and timings.
+
+The local manifest enables `KRAVEL_MLFLOW_CONTENT_MODE=redacted`. Content is a sanitized, size-capped preview, not an exact raw wire capture. Individual text fields are capped at 6,000 characters and content per span at 24,000; truncation is labeled. Redaction is best-effort: use non-sensitive demo questions/workloads, keep MLflow local, and review traces before sharing. To return to timing/counts only, set this environment variable to `metadata` and restart the debugger. No raw-content mode is offered. Older traces cannot recover questions/results that were never recorded; run a fresh investigation after upgrading.
+
+The agent root contains input guardrail, initial evidence reads, collected-evidence guardrail, Qwen inference, focused follow-up tools, output guardrail, and final issue discovery. Repair review, application (with individual operation spans), and recovery observation have separate metadata-only traces linked by proposal ID. Input-guardrail timing includes question and evidence scans. Trace-content redaction/export overhead remains measured separately from the guardrail decisions. Actual stage timings appear in the cockpit and Grafana.
 
 ## 7. Reset and repeat
 
