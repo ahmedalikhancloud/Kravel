@@ -17,7 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest==9.0.3"]
-evaluation = ["mlflow==3.14.0"]
+evaluation = ["mlflow==3.16.0"]
 
 [project.scripts]
 kravel = "kravel.cli:main"
