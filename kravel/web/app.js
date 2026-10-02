@@ -5,6 +5,7 @@ import { resourceHelp, sessionItems, responseTitle, repairTimeline } from "./dem
 const $ = (selector) => document.querySelector(selector);
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map((element) => [element.id, element]));
 const state = {cluster: null, selected: null, namespaceTool: false, activeTool: "get_resource", proposals: [], runs: [], session: null, currentRun: null, runId: null, runSignature: "", kind: "all", busy: false, refreshing: false, pendingFixes: new Set(), readVersion: 0};
+let evaluationRunId = "", evaluationBusy = false, evaluationTimer = null, evaluationSignature = "";
 const labs = [
   {type: "oomkilled", name: "oom-demo", title: "Memory pressure", subtitle: "OOMKilled"},
   {type: "imagepullbackoff", name: "image-demo", title: "Image delivery", subtitle: "ImagePullBackOff"},
@@ -210,6 +211,8 @@ function workflowSteps(steps) {
 }
 function renderInvestigation(run) {
   state.currentRun = run; elements.investigations.hidden = false;
+  elements.evaluationPanel.hidden = run.status !== "completed" || !run.payload?.traceId;
+  if (evaluationRunId !== run.id) { evaluationRunId = run.id; evaluationSignature = ""; elements.evaluationResults.replaceChildren(); elements.evaluationStatus.textContent = "No evaluation yet. No extra model calls happen until you click."; elements.evaluationFacts.value = ""; elements.evaluationReference.value = ""; evaluationBusy = false; updateEvaluationButtons(); if (elements.evaluationPanel.open) loadEvaluation(); }
   elements.investigateAll.disabled = state.busy;
   const signature = JSON.stringify(run); if (signature === state.runSignature) return; state.runSignature = signature;
   const payload = run.payload || {}, evidence = payload.evidence || [], findings = payload.findings || [];
@@ -241,6 +244,58 @@ function renderInvestigation(run) {
   elements.runEvidence.replaceChildren(...evidence.map((item) => { const detail = node("details", "evidence-item"); detail.dataset.evidenceId = item.id; detail.open = open.has(item.id); detail.append(node("summary", "", `${item.id} · ${item.label} · ${item.status}`)); const contents = node("div", "evidence-body"); function populate() { if (!detail.open || contents.children.length) return; contents.append(node("p", "", `Observed ${formatTime(item.observedAt)}. Stored observation, not the current resource state.`)); if (item.resource) contents.append(resourceLink(item.resource)); contents.append(node("pre", "", pretty(item.body))); } detail.addEventListener("toggle", populate); detail.append(contents); populate(); return detail; }));
   renderJourney();
 }
+function updateEvaluationButtons() {
+  elements.evaluateQuick.disabled = evaluationBusy || state.busy;
+  elements.evaluateAll.disabled = evaluationBusy || state.busy;
+}
+function evaluationLink(text, job, traceId = "") {
+  const link = node("a", "trace-link", text); link.target = "_blank"; link.rel = "noreferrer";
+  link.href = traceId ? `http://127.0.0.1:5000/#/experiments/${encodeURIComponent(job.scorerExperimentId)}/traces?selectedEvaluationId=${encodeURIComponent(traceId)}` : `http://127.0.0.1:5000/#/experiments/${encodeURIComponent(job.experimentId)}/runs/${encodeURIComponent(job.mlflowRunId)}`;
+  return link;
+}
+function renderEvaluation(job) {
+  evaluationBusy = ["queued", "running"].includes(job.status); updateEvaluationButtons();
+  const signature = JSON.stringify(job); if (signature === evaluationSignature) return; evaluationSignature = signature;
+  const open = new Set([...elements.evaluationResults.querySelectorAll("details[open]")].map((el) => el.dataset.scorer));
+  elements.evaluationModel.textContent = `Judge: ${job.model} · local only`;
+  const counts = Object.fromEntries(["completed", "error", "skipped"].map((status) => [status, job.scorers.filter((row) => row.status === status).length]));
+  elements.evaluationStatus.replaceChildren(node("span", "", `${job.status.replaceAll("_", " ")} · ${counts.completed} scored · ${counts.error} errors · ${counts.skipped} skipped. `));
+  if (job.error) elements.evaluationStatus.append(node("span", "", job.error));
+  if (job.mlflowRunId) elements.evaluationStatus.append(evaluationLink("Open evaluation run in MLflow ↗", job));
+  elements.evaluationResults.replaceChildren(...job.scorers.map((row) => {
+    const detail = node("details", `evaluation-score ${row.status}`), scores = (row.feedback || []).map((f) => f.feedback?.value).filter((v) => v !== undefined && v !== null);
+    detail.dataset.scorer = row.class; detail.open = open.has(row.class);
+    if (scores.some((value) => value === "no" || value === false || value === "unresolved" || value === 0)) detail.classList.add("scored-negative");
+    const icon = row.status === "completed" ? "✓" : row.status === "error" ? "!" : row.status === "running" ? "◌" : "○";
+    detail.append(node("summary", "", `${icon} ${row.class} · ${scores.length ? scores.join(", ") : row.status}${row.durationMs ? ` · ${formatDuration(row.durationMs)}` : ""}`));
+    if (row.reason || row.error) detail.append(node("p", "", row.reason || row.error));
+    for (const feedback of row.feedback || []) detail.append(node("p", "", feedback.rationale || feedback.error?.error_message || "No rationale supplied."));
+    if (row.traceId && job.experimentId) detail.append(evaluationLink("Inspect rubric, model request & result ↗", job, row.traceId));
+    return detail;
+  }));
+}
+async function loadEvaluation() {
+  const runId = evaluationRunId; if (!runId || elements.evaluationPanel.hidden) return;
+  try {
+    const data = await api(`/v1/evaluations?runId=${encodeURIComponent(runId)}`);
+    if (runId !== evaluationRunId) return;
+    if (data.jobs?.length) renderEvaluation(data.jobs[0]);
+    if (!elements.evaluationCatalog.children.length) {
+      const catalog = await api("/v1/evaluations/catalog"); elements.evaluationModel.textContent = `Judge: ${catalog.model} · local only`;
+      elements.evaluationCatalog.replaceChildren(...catalog.scorers.map((row) => node("p", "", `${row.class} (${row.kind === "deterministic" ? "no model call" : row.sessionLevel ? "multi-turn local judge" : "local judge"}) — ${row.description}`)));
+    }
+  } catch (error) { elements.evaluationStatus.textContent = `Evaluation unavailable: ${error.message}`; evaluationBusy = false; updateEvaluationButtons(); }
+}
+async function evaluateAnswer(profile) {
+  const runId = evaluationRunId; evaluationBusy = true; updateEvaluationButtons();
+  try {
+    const job = await api("/v1/evaluations", {method: "POST", body: JSON.stringify({runId, profile, expectedFacts: elements.evaluationFacts.value.split("\n").map((v) => v.trim()).filter(Boolean), expectedResponse: elements.evaluationReference.value.trim()})});
+    if (runId === evaluationRunId) renderEvaluation(job);
+  } catch (error) { evaluationBusy = false; updateEvaluationButtons(); elements.evaluationStatus.textContent = error.message; }
+}
+elements.evaluationPanel.addEventListener("toggle", () => { clearInterval(evaluationTimer); if (elements.evaluationPanel.open) { loadEvaluation(); evaluationTimer = setInterval(loadEvaluation, 3000); } });
+elements.evaluateQuick.addEventListener("click", () => evaluateAnswer("quick"));
+elements.evaluateAll.addEventListener("click", () => evaluateAnswer("all"));
 async function loadRuns() {
   try { state.runs = sessionItems((await api("/v1/investigations")).runs || [], state.session); if (!state.runs.some((r) => r.id === state.runId)) state.runId = state.runs.find((run) => run.status === "running")?.id || state.runs[0]?.id || null;
     const previous = elements.runHistory.value; elements.runHistory.replaceChildren(...(state.runs.length ? state.runs.map((run) => { const option = node("option", "", `${formatTime(run.started_at)} · ${run.target || "Namespace"} · ${run.status}`); option.value = run.id; return option; }) : [node("option", "", "No runs yet · investigate a resource")])); elements.runHistory.disabled = !state.runs.length; if (state.runs.length) elements.runHistory.value = state.runId || previous;

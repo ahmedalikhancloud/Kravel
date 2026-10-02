@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kravel-evaluation-data
+  namespace: kravel-observability
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kravel-evaluator
+  namespace: kravel-observability
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kravel-evaluator
+  template:
+    metadata:
+      labels:
+        app: kravel-evaluator
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: evaluator
+          image: kravel-evaluation:local
+          imagePullPolicy: Never
+          ports:
+            - {name: http, containerPort: 8083}
+          env:
+            - {name: KRAVEL_MLFLOW_URL, value: "http://kravel-mlflow.kravel-observability.svc.cluster.local:5000"}
+            - {name: KRAVEL_JUDGE_BASE_URL, value: "http://model-runner.docker.internal/engines/v1"}
+            - {name: KRAVEL_JUDGE_MODEL, value: "ai/qwen3:4b-instruct-2507-q4_K_M"}
+            - {name: KRAVEL_DEBUGGER_URL, value: "http://kravel.kravel-system.svc.cluster.local:8080"}
+            - {name: HOME, value: /tmp}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: "1", memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 3
+            failureThreshold: 100
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: temp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: kravel-evaluation-data}
+        - name: temp
+          emptyDir: {sizeLimit: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kravel-evaluator
+  namespace: kravel-observability
+spec:
+  type: ClusterIP
+  selector: {app: kravel-evaluator}
+  ports:
+    - {name: http, port: 8083, targetPort: http}

@@ -21,6 +21,7 @@ docker model run --detach "$QWEN_MODEL"
 
 section "Building the Kravel debugger"
 docker build --tag kravel:local "$KRAVEL_ROOT"
+docker build --file "$KRAVEL_ROOT/Dockerfile.evaluation" --tag kravel-evaluation:local "$KRAVEL_ROOT"
 
 section "Caching demo and observability images"
 for image in busybox:1.36 prom/prometheus:v3.13.3 grafana/grafana:13.1.6 ghcr.io/mlflow/mlflow:v3.14.0; do retry docker pull "$image"; done
@@ -56,6 +57,11 @@ rollout kravel-system kravel-operator 4m
 section "Starting Prometheus, Grafana, and MLflow"
 kubectl apply -f "$KRAVEL_ROOT/deploy/observability-local.yaml"
 for deployment in kravel-prometheus kravel-grafana kravel-mlflow; do rollout kravel-observability "$deployment" 6m; done
+
+section "Starting the isolated local MLflow judge worker (no Kubernetes identity)"
+kubectl apply -f "$KRAVEL_ROOT/deploy/evaluation-local.yaml"
+kubectl -n kravel-observability set env deployment/kravel-evaluator "KRAVEL_JUDGE_MODEL=${KRAVEL_JUDGE_MODEL:-$QWEN_MODEL}" >/dev/null
+rollout kravel-observability kravel-evaluator 6m
 
 section "Checking local Qwen connectivity from the read-only agent"
 kubectl -n kravel-system exec deployment/kravel -- python -m kravel.cli check-llm

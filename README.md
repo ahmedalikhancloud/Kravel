@@ -16,6 +16,7 @@ The main browser UI renders the live namespace as a navigable WebGL 3D observato
 - Local Slack-style approval inbox by default; real Slack reactions are optional.
 - Five-minute approval expiry, structured server dry-run, fixed repair catalog, and an append-only SQLite audit trail.
 - Prometheus, a provisioned Grafana dashboard, and persistent MLflow traces with nested spans for guardrails, Qwen calls, tools, and tracing overhead. Local investigation traces include bounded redacted questions, model messages/responses, evidence, and diagnoses; timing-only mode remains available.
+- Opt-in local MLflow LLM-as-a-Judge evaluations: all 24 pinned built-in scorers, independent-reference/session requirements, per-scorer rationale/latency and linked prompt/response traces. The isolated evaluator has no Kubernetes identity or repair authority. [Evaluation demo and upgrade guide](docs/evaluation.md).
 - Independent OOMKilled, ImagePullBackOff, CrashLoopBackOff, bad ConfigMap, and Service-selector mismatch labs, with a working HTTP workload.
 - No Groq, Codespaces, hosted model, public callback URL, or API key required.
 

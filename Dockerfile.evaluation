@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    KRAVEL_HOST=0.0.0.0 KRAVEL_PORT=8083 MLFLOW_ENABLE_ASYNC_TRACE_LOGGING=true MLFLOW_DISABLE_TELEMETRY=true
+WORKDIR /app
+RUN pip install --no-cache-dir 'mlflow==3.14.0' 'openai==3.22.1'
+COPY kravel ./kravel
+RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin kravel \
+    && mkdir -p /data && chown kravel:kravel /data
+USER kravel
+EXPOSE 8083
+CMD ["python", "-m", "kravel.evaluation"]

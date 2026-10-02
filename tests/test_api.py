@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 import json
 import threading
+import uuid
 import urllib.error
 import urllib.request
 
@@ -109,3 +110,27 @@ def test_broker_fresh_view_requires_human_key_and_preserves_records(monkeypatch)
         status, body = post(base, '/v1/demo-session', {}, headers)
         assert status == 200 and body['historyPreserved'] is True
         assert body['session']['id'] != original['id'] and store.proposal('active')
+
+
+def test_evaluation_proxy_only_accepts_own_completed_recorded_runs(monkeypatch):
+    import kravel.api as api
+    config = load_config()
+    config.host, config.port = '127.0.0.1', 0
+    store = AuditStore()
+    run_id = str(uuid.uuid4())
+    trace_id = 'tr-' + 'b' * 32
+    store.start_workflow(run_id, 'investigation', 'kravel-demo')
+    calls = []
+    def evaluator(_config, path, method='GET', body=None):
+        calls.append((path, method, body))
+        return {'id': str(uuid.uuid4()), 'status': 'queued', 'advisoryOnly': True}
+    monkeypatch.setattr(api, '_evaluation_request', evaluator)
+    with serving(create_server(store, config, object())) as base:
+        assert post(base, '/v1/evaluations', {'runId': run_id})[0] == 400
+        store.update_workflow(run_id, status='completed', payload={'traceId': trace_id})
+        assert post(base, '/v1/evaluations', {'runId': run_id, 'model': 'external'})[0] == 400
+        assert post(base, '/v1/evaluations', {'runId': run_id, 'traceId': 'tr-'+'c'*32})[0] == 400
+        code, response = post(base, '/v1/evaluations', {'runId': run_id, 'profile': 'quick'})
+        assert code == 202 and response['advisoryOnly'] is True
+        assert calls[-1] == ('/v1/jobs', 'POST', {'runId': run_id, 'profile': 'quick', 'traceId': trace_id})
+        assert post(base, '/v1/evaluations/approve', {})[0] == 404

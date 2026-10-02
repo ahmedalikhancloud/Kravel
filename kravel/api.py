@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -43,6 +44,19 @@ def _broker_request(config, path: str, method: str = "GET", body=None):
     if data is not None:
         headers["Content-Type"] = "application/json"
     with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers, method=method), timeout=20) as response:
+        return json.load(response)
+
+
+def _evaluation_request(config, path, method="GET", body=None):
+    from .utils import is_internal_hostname
+    if not config.evaluator_url:
+        raise ValueError("Local evaluator is not installed; run the updated preparation script")
+    url = safe_service_url(config.evaluator_url, "local evaluator")
+    if not is_internal_hostname(urlparse(url).hostname):
+        raise ValueError("Evaluator must remain local")
+    data = json.dumps(body).encode() if body is not None else None
+    with urllib.request.urlopen(urllib.request.Request(url + path, data=data,
+        headers={"Content-Type": "application/json"}, method=method), timeout=10) as response:
         return json.load(response)
 
 
@@ -115,6 +129,15 @@ def create_server(store, config, kube):
                 if not self.authorized():
                     return self.send_json(401, {"error": "unauthorized"})
                 query = self.query()
+                if path == "/v1/evaluations/catalog":
+                    return self.send_json(200, _evaluation_request(config, "/v1/catalog"))
+                if path == "/v1/evaluations":
+                    return self.send_json(200, _evaluation_request(config, "/v1/jobs?runId=" + urllib.parse.quote(query.get("runId", ""), safe="")))
+                if path.startswith("/v1/evaluations/"):
+                    job_id = path.split("/")[-1]
+                    if not re.fullmatch(r"[a-f0-9-]{36}", job_id):
+                        raise ValueError("Invalid evaluation job ID")
+                    return self.send_json(200, _evaluation_request(config, "/v1/jobs/" + job_id))
                 namespace = query.get("namespace", config.default_namespace)
                 if path == "/v1/demo-session":
                     return self.send_json(200, {"session": store.demo_session(), "historyPreserved": True})
@@ -176,6 +199,13 @@ def create_server(store, config, kube):
                 if not self.authorized():
                     return self.send_json(401, {"error": "unauthorized"})
                 body = self.body()
+                if path == "/v1/evaluations":
+                    if not isinstance(body, dict) or set(body) - {"runId", "profile", "expectedFacts", "expectedResponse"}:
+                        raise ValueError("Only a completed run, profile, and independent references may be evaluated")
+                    run = store.workflow(str(body.get("runId", "")))
+                    if not run or run["kind"] != "investigation" or run["status"] != "completed" or not run["payload"].get("traceId"):
+                        raise ValueError("Choose a completed investigation with a recorded MLflow trace")
+                    return self.send_json(202, _evaluation_request(config, "/v1/jobs", "POST", {**body, "traceId": run["payload"]["traceId"]}))
                 namespace = str(body.get("namespace") or config.default_namespace)
                 if path == "/v1/demo-session":
                     if not workflows.model_slot.acquire(blocking=False):

@@ -10,5 +10,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.test-tmp*/
+mlruns/
 .kravel-local-state.json
 .kravel-local-state.env

@@ -32,6 +32,9 @@ class Span:
     def set_attribute(self, *_):
         pass
 
+    def set_documents(self, value):
+        self.outputs = value
+
 
 class FakeTracer:
     setup_ms = overhead_ms = 0
@@ -52,6 +55,9 @@ class FakeTracer:
         return 0
 
     def set_previews(self, **_):
+        pass
+
+    def annotate_trace(self, **_):
         pass
 
 

@@ -5,31 +5,47 @@ import json
 import re
 import time
 
-from .guardrails import public_evidence
+from .guardrails import public_evidence, guard_model_input, _normalize, _redact
 from .utils import safe_service_url, stable_json
 
 
-def trace_content(value, max_characters=24_000):
+def trace_content(value, max_characters=24_000, text_limit=6000, quarantine_instructions=True):
     """Bounded, best-effort redaction, including serialized tool args and env values."""
     sensitive = re.compile(r"(?i)password|passwd|token|secret|api.?key|authorization|credential")
+    counters = {"prompt_tokens", "completion_tokens", "total_tokens", "max_tokens", "max_completion_tokens", "input_tokens", "output_tokens", "cached_tokens",
+                "mlflow.assessment.judgeInputTokens", "mlflow.assessment.judgeOutputTokens"}
+
+    def numeric_counter(key, value):
+        # Only known usage counters may bypass credential-key redaction. MLflow
+        # stores assessment metadata as strings; never exempt arbitrary text.
+        return key in counters and (type(value) in (int, float) or isinstance(value, str) and re.fullmatch(r"[0-9]{1,12}", value))
 
     def clean(item, depth=0):
         if depth > 12:
             return "[trace nesting limit]"
         if isinstance(item, dict):
             named_credential = sensitive.search(str(item.get("name", "")))
-            return {str(k)[:200]: "<redacted:sensitive_field>" if sensitive.search(str(k)) or named_credential and k == "value" else clean(v, depth+1) for k, v in list(item.items())[:80]}
+            return {str(k)[:200]: "<redacted:sensitive_field>" if (sensitive.search(str(k)) and not numeric_counter(k, v)) or named_credential and k == "value" else clean(v, depth+1) for k, v in list(item.items())[:80]}
         if isinstance(item, list):
             return [clean(v, depth+1) for v in item[:100]]
         if isinstance(item, str):
-            if len(item) <= 32_000 and item.lstrip().startswith(("{", "[")):
+            if item.lstrip().startswith(("{", "[")):
+                if len(item) > 192_000:
+                    return "[oversized serialized trace content withheld]"
                 try:
                     parsed = json.loads(item)
                     if isinstance(parsed, (dict, list)):
-                        return public_evidence(stable_json(clean(parsed, depth+1)))
+                        # Preserve wire text types (chat content / tool arguments /
+                        # retrieved page_content) after recursively redacting JSON.
+                        item = stable_json(clean(parsed, depth+1))
                 except (ValueError, RecursionError):
                     pass
-            return public_evidence(item)
+            if not item.strip():
+                return item
+            if not quarantine_instructions:
+                redacted = _redact(_normalize(item))[0]
+                return redacted if len(redacted) <= text_limit else redacted[:text_limit-40] + "\n[trace text truncated]"
+            return guard_model_input(item, "trace", text_limit)["value"]
         if item is None or isinstance(item, (bool, int, float)):
             return item
         return "[unsupported trace value]"
@@ -37,7 +53,7 @@ def trace_content(value, max_characters=24_000):
     safe = clean(value)
     encoded = stable_json(safe)
     if len(encoded) > max_characters:
-        return {"content_truncated": True, "redacted_excerpt": encoded[:max_characters-200], "note": "Sanitized span content capped at 24,000 characters; individual text fields are also bounded."}
+        return {"content_truncated": True, "redacted_excerpt": encoded[:max_characters-200], "note": f"Sanitized span content capped at {max_characters} characters; text fields at {text_limit}."}
     return safe
 
 
@@ -57,6 +73,9 @@ class _NullSpan:
         pass
 
     def set_content_outputs(self, _value):
+        pass
+
+    def set_documents(self, _value):
         pass
 
 
@@ -87,7 +106,7 @@ class _MeasuredSpan:
             return
         started = time.perf_counter()
         try:
-            safe = trace_content(value)
+            safe = trace_content(value, self.tracer.content_limit, self.tracer.text_limit)
         except Exception as exc:
             safe = {"content_unavailable": type(exc).__name__}
         self.tracer.overhead_ms += (time.perf_counter()-started)*1000
@@ -102,14 +121,24 @@ class _MeasuredSpan:
     def set_attribute(self, key, value):
         return self._call("set_attribute", key, value)
 
+    def set_documents(self, value):
+        # MLflow's retrieval scorers require a top-level list of page_content chunks.
+        if self.tracer.content_mode == "redacted":
+            return self._call("set_outputs", trace_content(value, self.tracer.content_limit, self.tracer.text_limit))
+
 
 class MlflowTracer:
     """Best-effort exporter; local demos can opt into bounded redacted content."""
 
-    def __init__(self, url: str, experiment: str, content_mode: str = "metadata"):
+    def __init__(self, url: str, experiment: str, content_mode: str = "metadata", detail: str = "standard"):
         if content_mode not in {"metadata", "redacted"}:
             raise ValueError("Unknown MLflow trace content mode")
         self.content_mode = content_mode
+        if detail not in {"standard", "deep"}:
+            raise ValueError("Unknown MLflow trace detail")
+        self.detail = detail
+        self.destination_experiment_id = ""
+        self.text_limit, self.content_limit = (32_000, 192_000) if detail == "deep" else (6000, 24_000)
         self.url = safe_service_url(url, "MLflow") if url else ""
         self.experiment = experiment
         self.enabled = bool(self.url)
@@ -140,11 +169,18 @@ class MlflowTracer:
         live = None
         try:
             started = time.perf_counter()
-            manager = self._mlflow.start_span(name=name, span_type=span_type)
+            destination = {}
+            if self.destination_experiment_id:
+                from mlflow.entities import MlflowExperimentLocation
+                destination["trace_destination"] = MlflowExperimentLocation(self.destination_experiment_id)
+            manager = self._mlflow.start_span(name=name, span_type=span_type, **destination)
             live = manager.__enter__()
             self.overhead_ms += (time.perf_counter() - started) * 1000
             measured = _MeasuredSpan(live, self)
             measured.set_attribute("kravel.content_mode", self.content_mode)
+            measured.set_attribute("kravel.trace_detail", self.detail)
+            measured.set_attribute("kravel.content_limit", self.content_limit)
+            measured.set_attribute("kravel.text_limit", self.text_limit)
             if inputs is not None:
                 measured.set_inputs(inputs)
             for key, value in (attributes or {}).items():
@@ -179,7 +215,14 @@ class MlflowTracer:
                 manager.__exit__(None, None, None)
                 self.overhead_ms += (time.perf_counter() - started) * 1000
             except Exception as exc:
-                self.error = str(exc)
+                self.error = type(exc).__name__
+
+    def annotate_trace(self, *, session_id=None, tags=None, metadata=None):
+        if self.enabled and self._mlflow is not None:
+            try:
+                self._mlflow.update_current_trace(session_id=session_id, tags=tags, metadata=metadata)
+            except Exception as exc:
+                self.error = type(exc).__name__
 
     def flush(self) -> float:
         if not self.enabled or self._mlflow is None:

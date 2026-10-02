@@ -163,6 +163,8 @@ spec:
             - {name: KRAVEL_MLFLOW_URL, value: "http://kravel-mlflow.kravel-observability.svc.cluster.local:5000"}
             - {name: KRAVEL_MLFLOW_EXPERIMENT, value: "Kravel Guarded Debugger"}
             - {name: KRAVEL_MLFLOW_CONTENT_MODE, value: "redacted"}
+            - {name: KRAVEL_MLFLOW_TRACE_DETAIL, value: "deep"}
+            - {name: KRAVEL_EVALUATOR_URL, value: "http://kravel-evaluator.kravel-observability.svc.cluster.local:8083"}
           ports:
             - {name: http, containerPort: 8080}
           readinessProbe:

@@ -56,6 +56,8 @@ class Config:
     operator_token: str = ""
     operator_url: str = ""
     mlflow_content_mode: str = "metadata"
+    mlflow_trace_detail: str = "standard"
+    evaluator_url: str = ""
     kube: KubeConfig = field(default_factory=KubeConfig)
 
 
@@ -84,6 +86,8 @@ def load_config() -> Config:
         operator_token=os.getenv("KRAVEL_OPERATOR_TOKEN", ""),
         operator_url=os.getenv("KRAVEL_OPERATOR_URL", ""),
         mlflow_content_mode=_trace_content_mode(),
+        mlflow_trace_detail=os.getenv("KRAVEL_MLFLOW_TRACE_DETAIL", "standard"),
+        evaluator_url=os.getenv("KRAVEL_EVALUATOR_URL", ""),
         kube=KubeConfig(
             host=os.getenv("KUBERNETES_SERVICE_HOST", ""),
             port=_integer("KUBERNETES_SERVICE_PORT_HTTPS", 443),
