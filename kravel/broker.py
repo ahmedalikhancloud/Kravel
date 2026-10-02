@@ -18,6 +18,7 @@ from .evidence import Progress
 from .tracing import MlflowTracer
 from .slack import SlackApprovalClient
 from .utils import stable_json, to_iso
+from .drafts import draft_fix, resolve_proposal
 
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
@@ -69,6 +70,10 @@ class ApprovalBroker:
         metadata = obj.get("metadata", {})
         if not metadata.get("uid") or not metadata.get("resourceVersion"):
             raise ValueError("Resource identity/version is missing; refusing mutation")
+        containers = patch.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+        existing = {c.get("name") for c in obj.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])}
+        if any(c.get("name") not in existing for c in containers):
+            raise ValueError("Repair may not add an unreviewed container to this workload")
         patch.setdefault("metadata", {}).update({"uid": metadata["uid"], "resourceVersion": metadata["resourceVersion"]})
         return patch
 
@@ -78,18 +83,25 @@ class ApprovalBroker:
             obj = self.kube.get_resource(operation["kind"], operation["name"], fix["namespace"])["object"]
             response = self.kube.patch(operation["kind"], operation["name"], fix["namespace"], self._guarded_patch(operation, obj), content_type=operation["contentType"], dry_run=True)
             results.append({**summarize_result(operation, response), "beforeUid": obj["metadata"]["uid"], "beforeFingerprint": self._fingerprint(obj), "planHash": self._plan_hash(fix)})
+            if fix.get("draft"):
+                results[-1]["reviewedDraft"] = copy.deepcopy(fix["draft"])
         return results
 
     def create(self, fix_id: str, namespace: str, actor: str = "kravel-debugger") -> dict:
         with self.lock:
             return self._create(fix_id, namespace, actor)
 
-    def _create(self, fix_id: str, namespace: str, actor: str) -> dict:
+    def create_draft(self, draft: dict, namespace: str, actor: str = "kravel-debugger") -> dict:
+        with self.lock:
+            fix = draft_fix(draft, namespace)  # Revalidate deterministic authority at the broker.
+            return self._create(fix["id"], namespace, actor, prepared_fix=fix)
+
+    def _create(self, fix_id: str, namespace: str, actor: str, prepared_fix=None) -> dict:
         for existing in self.store.active_proposals():
             if existing["fix_id"] == fix_id and existing["namespace"] == namespace and existing["status"] in {"pending", "approved", "executing"}:
                 return existing
         proposal_id = str(uuid.uuid4())
-        fix = get_fix(fix_id, namespace, proposal_id)
+        fix = prepared_fix or get_fix(fix_id, namespace, proposal_id)
         self.store.start_workflow(proposal_id, "repair", namespace, fix["resource"])
         tracer = self._tracer()
         self.store.workflow_step(proposal_id, "review_trace_setup", "Initialize review tracing", "completed", duration_ms=tracer.setup_ms)
@@ -204,7 +216,7 @@ class ApprovalBroker:
         root_context = tracer.span("repair.workflow", "CHAIN", {"proposal_id": proposal["id"], "fix_id": proposal["fix_id"]})
         root_span = root_context.__enter__()
         try:
-            fix = get_fix(proposal["fix_id"], proposal["namespace"], proposal["id"])
+            fix = resolve_proposal(proposal)
             dry_runs = proposal["dryRun"]
             if len(dry_runs) != len(fix["operations"]) or any(result.get("planHash") != self._plan_hash(fix) for result in dry_runs):
                 raise ValueError("Fix catalog changed since review; a new dry-run and approval are required")
@@ -325,6 +337,8 @@ def create_broker_server(broker: ApprovalBroker, config):
                         broker.store.record("approval-broker", "demo.view_started", actor="local-human", details={"sessionId": session["id"], "historyPreserved": True})
                         return self.json(200, {"session": session, "historyPreserved": True})
                 if path == "/v1/proposals":
+                    if "draft" in body:
+                        return self.json(201, broker.create_draft(body["draft"], str(body.get("namespace") or config.default_namespace), str(body.get("actor") or "kravel-debugger")))
                     return self.json(201, broker.create(str(body.get("fixId", "")), str(body.get("namespace") or config.default_namespace), str(body.get("actor") or "kravel-debugger")))
                 if path.startswith("/v1/proposals/") and path.endswith(("/approve", "/reject")):
                     if not self.local_authorized():

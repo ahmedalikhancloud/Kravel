@@ -85,3 +85,18 @@ def test_observability_hub_has_guided_contextual_navigation_without_guessing_ids
     assert 'scorerExperimentId, row.traceId' in js
     assert 'state.currentRun?.id !== state.runId' in js
     assert 'state.currentRun.id !== state.runId' in js
+
+
+def test_runbooks_and_new_repair_drafts_are_visible_without_permission_expansion():
+    from kravel.api import WEB_ASSETS
+    html = (ROOT / "kravel/web/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "kravel/web/runbooks.mjs").read_text(encoding="utf-8")
+    manifest = (ROOT / "deploy/local.yaml").read_text(encoding="utf-8")
+    for element_id in ("runbookLibrary", "runbookSearch", "runbookGroup", "runbookContext", "draftRepairs"):
+        assert f'id="{element_id}"' in html
+    assert WEB_ASSETS["/ui/runbooks.mjs"][0] == "runbooks.mjs"
+    assert "innerHTML" not in js and "not observed causes" in js
+    assert "Request server dry-run & human review" in js
+    assert "mountPath: /repair-policy, readOnly: true" in manifest
+    debugger_role = manifest.split("name: kravel-debugger-readonly", 1)[1].split("---", 1)[0]
+    assert "patch" not in debugger_role and "secrets" not in debugger_role

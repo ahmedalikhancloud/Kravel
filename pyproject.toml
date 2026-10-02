@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest==9.0.3"]
 evaluation = ["mlflow==3.16.0"]
+retrieval = ["sentence-transformers==5.7.0"]
 
 [project.scripts]
 kravel = "kravel.cli:main"

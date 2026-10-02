@@ -1,0 +1,5 @@
+# Optional CPU retrieval models. Default kravel:local remains lightweight.
+FROM kravel:local
+USER root
+RUN pip install --no-cache-dir 'sentence-transformers==5.7.0'
+USER kravel

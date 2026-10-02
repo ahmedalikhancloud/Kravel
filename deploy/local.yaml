@@ -21,7 +21,7 @@ metadata:
   name: kravel-debugger-readonly
 rules:
   - apiGroups: [""]
-    resources: ["pods", "configmaps", "services", "endpoints", "serviceaccounts", "persistentvolumeclaims", "namespaces", "nodes", "events"]
+    resources: ["pods", "configmaps", "services", "endpoints", "serviceaccounts", "persistentvolumeclaims", "namespaces", "nodes", "events", "resourcequotas", "limitranges"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["pods/log"]
@@ -40,6 +40,9 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -153,6 +156,7 @@ spec:
             - {name: KRAVEL_DB_PATH, value: "/data/audit.db"}
             - {name: KRAVEL_CLUSTER_ID, value: "docker-desktop"}
             - {name: KRAVEL_DEFAULT_NAMESPACE, value: "kravel-demo"}
+            - {name: KRAVEL_REPAIR_PROFILES_PATH, value: "/repair-policy/profiles.json"}
             - {name: KRAVEL_BROKER_URL, value: "http://kravel-approval-broker.kravel-system.svc.cluster.local:8090"}
             - {name: KRAVEL_OPERATOR_URL, value: "http://kravel-operator.kravel-system.svc.cluster.local:8082"}
             - {name: KRAVEL_LLM_BASE_URL, value: "http://host.docker.internal:12434/engines/v1"}
@@ -183,11 +187,14 @@ spec:
           volumeMounts:
             - {name: data, mountPath: /data}
             - {name: tmp, mountPath: /tmp}
+            - {name: repair-policy, mountPath: /repair-policy, readOnly: true}
       volumes:
         - name: data
           persistentVolumeClaim: {claimName: kravel-data}
         - name: tmp
           emptyDir: {}
+        - name: repair-policy
+          configMap: {name: kravel-repair-profiles, optional: true}
 ---
 apiVersion: v1
 kind: Service
@@ -235,6 +242,7 @@ spec:
             - {name: KRAVEL_DB_PATH, value: "/data/approvals.db"}
             - {name: KRAVEL_DEFAULT_NAMESPACE, value: "kravel-demo"}
             - {name: KRAVEL_APPROVAL_TIMEOUT_SECONDS, value: "300"}
+            - {name: KRAVEL_REPAIR_PROFILES_PATH, value: "/repair-policy/profiles.json"}
             - name: KRAVEL_APPROVAL_TOKEN
               valueFrom:
                 secretKeyRef: {name: kravel-approval-token, key: token}
@@ -262,11 +270,14 @@ spec:
           volumeMounts:
             - {name: data, mountPath: /data}
             - {name: tmp, mountPath: /tmp}
+            - {name: repair-policy, mountPath: /repair-policy, readOnly: true}
       volumes:
         - name: data
           persistentVolumeClaim: {claimName: kravel-approval-data}
         - name: tmp
           emptyDir: {}
+        - name: repair-policy
+          configMap: {name: kravel-repair-profiles, optional: true}
 ---
 apiVersion: v1
 kind: Service

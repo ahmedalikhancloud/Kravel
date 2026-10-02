@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from .kube import RESOURCE_MAP
 from .topology import build_connections, resource_key
+from .diagnostics import controlled_pods, enrich_findings
 
 
 READ_ONLY_TOOLS = [
@@ -91,6 +92,8 @@ def discover_issues(kube, namespace: str) -> dict:
     replicasets = [obj for obj in kube.list_resources("replicasets", namespace, limit=200)["items"] if int(obj.get("spec", {}).get("replicas", 0) or 0) > 0 or obj.get("metadata", {}).get("name") in pod_owners]
     configmaps = kube.list_resources("configmaps", namespace, limit=100)["items"]
     services = kube.list_resources("services", namespace, limit=100)["items"]
+    daemonsets = kube.list_resources("daemonsets", namespace, limit=100)["items"]
+    statefulsets = kube.list_resources("statefulsets", namespace, limit=100)["items"]
     issues = []
     for pod in pods:
         issue_type, fix_id, evidence = _container_issue(pod, namespace)
@@ -136,15 +139,23 @@ def discover_issues(kube, namespace: str) -> dict:
         metadata, spec, status = deployment.get("metadata", {}), deployment.get("spec", {}), deployment.get("status", {})
         desired = int(spec.get("replicas", 1) or 0)
         available = int(status.get("availableReplicas", 0) or 0)
-        app = metadata.get("labels", {}).get("app", metadata.get("name", ""))
-        expected_issue = {"oom-demo": "oomkilled", "image-demo": "imagepullbackoff", "crash-demo": "crashloopbackoff", "config-demo": "bad_configmap"}.get(app, "")
-        issue = next((item for item in issues if item["type"] == expected_issue), None)
+        owned_names = {p["metadata"]["name"] for p in controlled_pods({**deployment, "kind": "Deployment"}, pods, replicasets)}
+        issue = next((item for item in issues if item["resource"] in {"Pod/" + name for name in owned_names}), None)
+        if not issue and metadata.get("name") == "config-demo" and config_broken:
+            issue = next((item for item in issues if item["resource"] == "ConfigMap/config-demo"), None)
         resources.append({
             "kind": "Deployment", "name": metadata.get("name", ""), "namespace": namespace,
             "status": issue["title"] if issue else f"{available}/{desired} available",
             "health": issue["severity"] if issue else ("healthy" if desired == available else "warning"),
             "ready": desired == available, "issueType": issue["type"] if issue else "",
         })
+    for kind, controllers in (("DaemonSet", daemonsets), ("StatefulSet", statefulsets)):
+        for controller in controllers:
+            metadata, spec, status = controller.get("metadata", {}), controller.get("spec", {}), controller.get("status", {})
+            desired = int(status.get("desiredNumberScheduled", 0) if kind == "DaemonSet" else spec.get("replicas", 1))
+            available = int(status.get("numberReady", 0) if kind == "DaemonSet" else status.get("readyReplicas", 0))
+            ready = desired > 0 and available == desired and status.get("observedGeneration", 0) >= metadata.get("generation", 0)
+            resources.append({"kind": kind, "name": metadata.get("name", ""), "namespace": namespace, "status": f"{available}/{desired} ready", "health": "healthy" if ready else "warning", "ready": ready, "issueType": ""})
     for configmap in configmaps:
         name = configmap.get("metadata", {}).get("name", "")
         if name == "kube-root-ca.crt":
@@ -176,7 +187,16 @@ def discover_issues(kube, namespace: str) -> dict:
         })
     for resource in resources:
         resource["id"] = resource_key(resource["kind"], resource["name"], namespace)
-    objects = [*({**obj, "kind": "Pod"} for obj in pods), *({**obj, "kind": "Deployment"} for obj in deployments), *({**obj, "kind": "ReplicaSet"} for obj in replicasets), *({**obj, "kind": "ConfigMap"} for obj in configmaps), *({**obj, "kind": "Service"} for obj in services)]
+    objects = [*({**obj, "kind": "Pod"} for obj in pods), *({**obj, "kind": "Deployment"} for obj in deployments), *({**obj, "kind": "ReplicaSet"} for obj in replicasets), *({**obj, "kind": "DaemonSet"} for obj in daemonsets), *({**obj, "kind": "StatefulSet"} for obj in statefulsets), *({**obj, "kind": "ConfigMap"} for obj in configmaps), *({**obj, "kind": "Service"} for obj in services)]
+    # Event enrichment is needed only when a current symptom exists. Failure is
+    # explicit coverage loss, not permission to infer a cause from old history.
+    gaps, events = [], []
+    if issues:
+        try:
+            events = kube.events(namespace, limit=100)["items"]
+        except Exception:
+            gaps.append("Recent Events unavailable; detailed symptom matching is incomplete.")
+        enrich_findings(issues, {"pods": pods, "replicasets": replicasets, "deployments": deployments, "daemonsets": daemonsets, "statefulsets": statefulsets}, events, namespace)
     connections = build_connections(objects, namespace, {resource["id"] for resource in resources})
     return {
         "namespace": namespace,
@@ -186,5 +206,6 @@ def discover_issues(kube, namespace: str) -> dict:
         "issues": issues,
         "resources": resources,
         "connections": connections,
+        "gaps": gaps,
         "durationMs": (time.perf_counter() - started) * 1000,
     }

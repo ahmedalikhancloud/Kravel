@@ -2,7 +2,7 @@ export const resourceId = (resource) => resource.id || `${resource.namespace}/${
 
 export function matchingResources(resources, query = "", kind = "all") {
   const needle = query.trim().toLowerCase();
-  return resources.filter((resource) => (kind === "all" || (kind === "controllers" ? ["Deployment", "ReplicaSet"].includes(resource.kind) : resource.kind === kind)) && `${resource.name} ${resource.kind} ${resource.namespace}`.toLowerCase().includes(needle));
+  return resources.filter((resource) => (kind === "all" || (kind === "controllers" ? ["Deployment", "DaemonSet", "StatefulSet", "ReplicaSet"].includes(resource.kind) : resource.kind === kind)) && `${resource.name} ${resource.kind} ${resource.namespace}`.toLowerCase().includes(needle));
 }
 
 export function layoutTopology(resources, connections) {
@@ -13,15 +13,15 @@ export function layoutTopology(resources, connections) {
     seen.add(id);
     return owners.has(id) ? root(owners.get(id), seen) : id;
   };
-  const roots = [...new Set(resources.filter((resource) => ["Deployment", "ReplicaSet", "Pod"].includes(resource.kind)).map((resource) => root(resourceId(resource))))].sort();
+  const roots = [...new Set(resources.filter((resource) => ["Deployment", "DaemonSet", "StatefulSet", "ReplicaSet", "Pod"].includes(resource.kind)).map((resource) => root(resourceId(resource))))].sort();
   if (!roots.length) roots.push("unowned");
   const group = (resource) => {
     const id = resourceId(resource);
-    if (["Deployment", "ReplicaSet", "Pod"].includes(resource.kind)) return root(id);
+    if (["Deployment", "DaemonSet", "StatefulSet", "ReplicaSet", "Pod"].includes(resource.kind)) return root(id);
     const targets = connections.filter((edge) => edge.source === id).map((edge) => edge.target).filter((target) => byId.has(target));
     return targets.length ? root(targets.sort()[0]) : "unowned";
   };
-  const lanes = {ConfigMap: -7, Deployment: -3.5, ReplicaSet: 0, Pod: 3.5, Service: 7};
+  const lanes = {ConfigMap: -7, Deployment: -3.5, DaemonSet: -3.5, StatefulSet: -3.5, ReplicaSet: 0, Pod: 3.5, Service: 7};
   const groups = new Map();
   for (const resource of [...resources].sort((a, b) => resourceId(a).localeCompare(resourceId(b)))) {
     const groupId = group(resource), index = roots.indexOf(groupId);

@@ -53,6 +53,14 @@
         <div class="fresh-start"><div><b>A clean presentation</b><p>Once the labs are healthy, clear past completed questions from this view. MLflow and audit records are preserved.</p></div><button id="freshView" title="Clears the display only; it does not reset Kubernetes">Clear this view</button></div>
         <p id="sessionNotice" class="panel-note">This page shows the current demo session, not past completed runs.</p>
       </section>
+      <section id="runbookLibrary" class="panel runbook-library">
+        <details><summary><span>✦ Karl’s field guide</span><small>50 production troubleshooting runbooks · open when you need a clue</small></summary>
+          <p>Common symptoms can have different causes. Find a reference, check its evidence requirements, then ask Karl to investigate. Unfamiliar problems can also produce new repair drafts; knowledge never grants write access.</p>
+          <div class="runbook-toolbar"><label>Find a clue<input id="runbookSearch" type="search" maxlength="2000" placeholder="OOMKilled, DNS timeout, image format…"></label><label>Collection<select id="runbookGroup"><option value="all">All references</option><option value="common">25 common cases</option><option value="difficult">25 difficult cases</option></select></label></div>
+          <p id="runbookStatus" class="panel-note" role="status">Loading the local library…</p><span id="runbookCount" class="hint-chip"></span><div id="runbookResults" class="runbook-results"></div>
+          <details class="learning-guide"><summary>Why might a repair need enrollment?</summary><p>Karl can draft a fix for a new problem, but the separate broker can change only explicitly enrolled objects and fields in kravel-demo. Your operator reviews the intended healthy values and a generated named RBAC role first. See docs/repair-coverage.md for Bash instructions. Node, control-plane, credentials, data-loss and security-policy repairs remain operator-led.</p></details>
+        </details>
+      </section>
       <section id="incidents" class="panel incident-panel" hidden><div class="panel-heading"><div><span class="eyebrow">A CLUE TO FOLLOW</span><h2>What needs attention?</h2></div><span id="issueCount" class="count">0</span></div><div id="issueList" class="issue-list" aria-live="polite"></div><div id="workloadGrid" class="workload-grid"></div></section>
       <section id="investigations" class="panel investigation-panel" hidden>
         <div class="panel-heading"><div><span class="eyebrow">STEP 3 · FOLLOW THE EVIDENCE</span><h2 id="investigationTitle">Karl’s investigation</h2></div><button id="investigateAll">✦ Investigate problems</button></div>
@@ -60,7 +68,7 @@
         <p id="requestLoadingStatus" class="cockpit-note" role="status" hidden>Opening the selected question… Previous results are temporarily non-interactive.</p>
         <p id="runCoverage" class="cockpit-note">Karl will show what he reads and where evidence is missing.</p>
         <nav id="requestShortcuts" class="request-shortcuts" aria-label="Selected request insights"><a id="requestTrace" aria-disabled="true">Open this request trace ↗</a><button id="requestFlow">Follow the flow ↓</button><button id="requestEvaluation">Evaluate this answer ↓</button><a href="#observability">What should I inspect?</a></nav>
-        <div id="requestDecision" class="request-decision" hidden></div><div id="runFindings" class="finding-list"></div><div id="runReport" class="run-report" hidden></div>
+        <div id="requestDecision" class="request-decision" hidden></div><div id="runFindings" class="finding-list"></div><div id="runReport" class="run-report" hidden></div><div id="runbookContext" hidden></div><div id="draftRepairs" hidden></div>
         <details id="investigationSteps" class="learning-guide"><summary>Follow the investigation steps & checks</summary><div id="runSteps" aria-live="polite"></div></details>
         <details id="evaluationPanel" class="learning-guide evaluation-panel" hidden>
           <summary>Evaluate Karl’s answer · local MLflow judges</summary>

@@ -31,12 +31,17 @@ RESOURCE_MAP = {
     "replicasets": ("apps", "v1", "replicasets", True),
     "replicaset": ("apps", "v1", "replicasets", True),
     "statefulsets": ("apps", "v1", "statefulsets", True),
+    "statefulset": ("apps", "v1", "statefulsets", True),
     "daemonsets": ("apps", "v1", "daemonsets", True),
+    "daemonset": ("apps", "v1", "daemonsets", True),
     "jobs": ("batch", "v1", "jobs", True),
     "cronjobs": ("batch", "v1", "cronjobs", True),
     "ingresses": ("networking.k8s.io", "v1", "ingresses", True),
     "networkpolicies": ("networking.k8s.io", "v1", "networkpolicies", True),
     "horizontalpodautoscalers": ("autoscaling", "v2", "horizontalpodautoscalers", True),
+    "poddisruptionbudgets": ("policy", "v1", "poddisruptionbudgets", True),
+    "resourcequotas": ("", "v1", "resourcequotas", True),
+    "limitranges": ("", "v1", "limitranges", True),
     "endpointslices": ("discovery.k8s.io", "v1", "endpointslices", True),
 }
 

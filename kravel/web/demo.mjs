@@ -2,6 +2,8 @@
 export const resourceHelp = {
   Pod: 'A Pod is the small home where an application container runs.',
   Deployment: 'A Deployment keeps the right number of Pods running and manages updates.',
+  DaemonSet: 'A DaemonSet runs a Pod on each eligible node, often for logging or monitoring.',
+  StatefulSet: 'A StatefulSet manages ordered Pods with stable identities, often for stateful applications.',
   ReplicaSet: 'A ReplicaSet is a Deployment’s helper: it maintains a set of matching Pods.',
   ConfigMap: 'A ConfigMap holds settings that an application can read. It is not a secret store.',
   Service: 'A Service gives matching Pods a stable network address. A connection here is not a traffic test.',
@@ -15,6 +17,16 @@ export function sessionItems(items, session, timestamp = 'started_at') {
 
 export function responseTitle(payload) {
   return payload.responseKind === 'request_blocked' ? 'Request paused · safety check' : payload.responseKind === 'scope_help' ? 'Karl’s guide · no cluster reads' : payload.responseKind === 'learning_explanation' ? 'Learn with Karl · general explanation' : 'Karl’s analysis · check the evidence';
+}
+
+export function resourceIssues(cluster, kind, name) {
+  const connected = new Set([`${cluster?.namespace}/${kind}/${name}`]);
+  for (let depth = 0; depth < 3; depth++) {
+    for (const edge of cluster?.connections || []) {
+      if (connected.has(edge.source) && ['owns', 'configures'].includes(edge.relation)) connected.add(edge.target);
+    }
+  }
+  return (cluster?.issues || []).filter((issue) => connected.has(`${cluster?.namespace}/${issue.resource}`));
 }
 
 export function repairTimeline(proposal) {

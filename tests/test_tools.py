@@ -14,7 +14,7 @@ class FakeKube:
             ]}
         if kind == "deployments":
             return {"items": [self.deployment(name) for name in ("oom-demo", "image-demo", "crash-demo", "config-demo")]}
-        if kind == "replicasets":
+        if kind in {"replicasets", "daemonsets", "statefulsets"}:
             return {"items": []}
         if kind == "configmaps":
             return {"items": [{"metadata": {"name": "config-demo"}, "data": {"MODE": "broken"}}, {"metadata": {"name": "kube-root-ca.crt"}, "data": {"ca.crt": "redacted"}}]}
@@ -29,11 +29,11 @@ class FakeKube:
     @staticmethod
     def pod(name, app, waiting="", last_reason=""):
         state = {"waiting": {"reason": waiting}} if waiting else {"running": {}}
-        return {"metadata": {"name": name, "labels": {"app": app}}, "status": {"phase": "Running", "containerStatuses": [{"name": app, "ready": not waiting, "state": state, "lastState": {"terminated": {"reason": last_reason}}}]}}
+        return {"metadata": {"name": name, "labels": {"app": app}, "ownerReferences": [{"kind": "Deployment", "name": app, "uid": f"uid-{app}", "controller": True}]}, "status": {"phase": "Running", "containerStatuses": [{"name": app, "ready": not waiting, "state": state, "lastState": {"terminated": {"reason": last_reason}}}]}}
 
     @staticmethod
     def deployment(name):
-        return {"metadata": {"name": name, "labels": {"app": name}}, "spec": {"replicas": 1}, "status": {"availableReplicas": 0}}
+        return {"metadata": {"name": name, "uid": f"uid-{name}", "labels": {"app": name}}, "spec": {"replicas": 1}, "status": {"availableReplicas": 0}}
 
 
 def test_discovers_four_independent_demo_failures_and_visual_resources():
@@ -108,7 +108,7 @@ def test_snapshot_includes_active_replicasets_and_real_owner_edges_not_old_empty
         def list_resources(self, kind, namespace, **kwargs):
             if kind == "replicasets":
                 return {"items": [
-                    {"metadata": {"name": "oom-revision", "uid": "rs1", "ownerReferences": [{"kind": "Deployment", "name": "oom-demo", "controller": True}]}, "spec": {"replicas": 1}},
+                    {"metadata": {"name": "oom-revision", "uid": "rs1", "ownerReferences": [{"kind": "Deployment", "name": "oom-demo", "uid": "uid-oom-demo", "controller": True}]}, "spec": {"replicas": 1}},
                     {"metadata": {"name": "old-empty"}, "spec": {"replicas": 0}},
                 ]}
             result = super().list_resources(kind, namespace, **kwargs)
@@ -117,7 +117,7 @@ def test_snapshot_includes_active_replicasets_and_real_owner_edges_not_old_empty
             return result
     snapshot = discover_issues(OwnedKube(), "kravel-demo")
     assert [item["name"] for item in snapshot["resources"] if item["kind"] == "ReplicaSet"] == ["oom-revision"]
-    assert len(snapshot["connections"]) == 2
+    assert len(snapshot["connections"]) == 5
     assert any(edge["source"] == "kravel-demo/ReplicaSet/oom-revision" and edge["target"] == "kravel-demo/Pod/oom-demo-a" for edge in snapshot["connections"])
 
 

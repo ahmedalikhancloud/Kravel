@@ -4,6 +4,7 @@ import copy
 import shlex
 
 from .utils import stable_json
+from .remediation import load_profiles, profile_fix
 
 
 DEMO_NAMESPACE = "kravel-demo"
@@ -78,9 +79,13 @@ FIX_CATALOG = {
 def get_fix(fix_id: str, namespace: str, restart_marker: str = "") -> dict:
     if namespace != DEMO_NAMESPACE:
         raise ValueError("The approval broker can mutate only the disposable kravel-demo namespace")
-    if fix_id not in FIX_CATALOG:
-        raise ValueError("Unknown or non-allowlisted fix")
-    fix = copy.deepcopy({"id": fix_id, "namespace": namespace, **FIX_CATALOG[fix_id]})
+    if fix_id in FIX_CATALOG:
+        fix = copy.deepcopy({"id": fix_id, "namespace": namespace, **FIX_CATALOG[fix_id]})
+    else:
+        profile = next((p for p in load_profiles() if p["id"] == fix_id), None)
+        if not profile:
+            raise ValueError("Unknown or non-allowlisted fix; this resource needs an operator-reviewed repair profile")
+        fix = profile_fix(profile)
     if fix_id == "fix_bad_configmap" and restart_marker:
         fix["operations"][1]["patch"]["spec"]["template"]["metadata"]["annotations"]["kravel.dev/approved-restart"] = restart_marker
     # The review command describes exactly the structured patches that are executed.
@@ -94,7 +99,8 @@ def get_fix(fix_id: str, namespace: str, restart_marker: str = "") -> dict:
 
 
 def public_catalog() -> list[dict]:
-    return [{key: fix[key] for key in ("id", "title", "resource", "command")} for fix in (get_fix(fix_id, DEMO_NAMESPACE) for fix_id in FIX_CATALOG)]
+    ids = [*FIX_CATALOG, *(p["id"] for p in load_profiles())]
+    return [{key: fix[key] for key in ("id", "title", "resource", "command")} for fix in (get_fix(fix_id, DEMO_NAMESPACE) for fix_id in ids)]
 
 
 def summarize_result(operation: dict, response: dict) -> dict:

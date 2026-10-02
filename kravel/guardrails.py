@@ -121,12 +121,13 @@ def guard_debugger_output(value, max_characters: int = 12_000):
     text, count = pattern.subn("[mutation command withheld; remediation requires human approval]", text)
     if count:
         findings.append({"code": "mutation_command_withheld", "count": count})
-    from .fixes import FIX_CATALOG
+    from .fixes import public_catalog
+    known_fix_ids = {fix["id"] for fix in public_catalog()}
     identifier = re.compile(r"fix[ _]?ids?\s*[:=]\s*([a-z0-9_-]+)", re.I)
     lines = []
     for line in text.split("\n"):
         match = identifier.search(line)
-        if match and match.group(1) not in FIX_CATALOG:
+        if match and match.group(1) not in known_fix_ids:
             line = "[Unrecognized model fix identifier withheld; use the reviewed catalog action.]"
             findings.append({"code": "unsupported_fix_identifier", "count": 1})
         lines.append(line)

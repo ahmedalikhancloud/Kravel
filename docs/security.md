@@ -8,8 +8,8 @@ Kravel is intentionally a debugger first and a tightly bounded demo repair workf
 - The LLM has no shell tool and no mutation tool. It can return only prose and known fix IDs.
 - Cluster and log text is treated as untrusted input. Instruction-like text is quarantined, credentials are redacted, and evidence is length-bounded before model use.
 - Generated output is redacted and direct mutation commands are withheld. The exact displayed command comes from trusted code, not from Qwen.
-- The broker uses a separate ServiceAccount restricted with `resourceNames` to six disposable objects in `kravel-demo`: four Deployments, one ConfigMap, one Service.
-- The broker accepts no arbitrary command or arbitrary patch.
+- The broker uses a separate ServiceAccount restricted with `resourceNames` to six default disposable objects in `kravel-demo`: four Deployments, one ConfigMap, one Service. Additional resources require operator-reviewed field profiles and a separately generated named Role; adding a runbook does not expand RBAC. Policy files are mounted read-only from `kravel-system`, never from agent-writable storage or a model-controlled endpoint.
+- The broker accepts no arbitrary shell command. Novel structured patches are permitted only for operator-enrolled named resources/fields in `kravel-demo`, with deterministic path validation, server dry-run and separate human approval. Knowledge retrieval cannot enroll objects, grant permissions or execute anything. See `docs/repair-coverage.md` for scope and limitations.
 - Every proposal must pass Kubernetes server-side dry-run and expire after five minutes without a human decision.
 - The reviewed plan and resource identity/spec are checked again before execution. Resets or edits invalidate the proposal, and version preconditions reject concurrent changes. Each approval/execution is claimed atomically; interrupted executions are never replayed automatically.
 - Read tools stay inside the operator-selected investigation namespace; the model cannot switch namespaces. Cluster-wide Node and Namespace inspection remains read-only.

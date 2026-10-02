@@ -2,6 +2,9 @@
 
 Explore a real Kubernetes cluster, create one practice problem, ask Karl to investigate, and approve a repair. Everything runs locally: Docker Desktop Kubernetes, Qwen in Docker Model Runner, and localhost dashboards. No Groq key, Codespace, or public callback is needed.
 
+For the new 50-case field guide, unfamiliar-problem repair drafts, named DaemonSet
+enrollment and optional local hybrid RAG, follow [the repair coverage guide](docs/repair-coverage.md).
+
 ## 1. Prepare once
 
 In Docker Desktop, enable **Kubernetes** and **Model Runner**, including Model Runner's localhost TCP access on port `12434`. Enable GPU acceleration if supported. Allow at least 8 GB Docker memory if available; Qwen and observability use most of it.

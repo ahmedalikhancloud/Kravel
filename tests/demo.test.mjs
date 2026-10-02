@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {sessionItems, responseTitle, repairTimeline} from '../kravel/web/demo.mjs';
+import {sessionItems, responseTitle, repairTimeline, resourceIssues} from '../kravel/web/demo.mjs';
 
 test('a fresh view hides old completed work but never hides active approvals', () => {
   const items = [{id: 'past', status: 'executed', created_at: '2026-09-29T00:00:00Z'}, {id: 'active', status: 'pending', created_at: '2026-09-29T00:00:00Z'}, {id: 'new', status: 'executed', created_at: '2026-09-30T12:01:00Z'}];
@@ -31,4 +31,10 @@ test('rejection leaves future repair stages skipped instead of showing success',
   const plan = repairTimeline({status: 'rejected', dryRun: [{}], workflow: {steps: [{step_key: 'approval', status: 'rejected'}]}});
   assert.equal(plan[1].status, 'rejected');
   assert.equal(plan.at(-1).status, 'skipped');
+});
+
+test('an unrelated DaemonSet image pull cannot mark the healthy image lab broken', () => {
+  const cluster = {namespace: 'kravel-demo', issues: [{resource: 'Pod/log-node', type: 'imagepullbackoff'}], connections: [{source: 'kravel-demo/DaemonSet/logger', target: 'kravel-demo/Pod/log-node', relation: 'owns'}]};
+  assert.equal(resourceIssues(cluster, 'Deployment', 'image-demo').length, 0);
+  assert.equal(resourceIssues(cluster, 'DaemonSet', 'logger').length, 1);
 });

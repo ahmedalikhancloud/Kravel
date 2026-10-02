@@ -42,9 +42,11 @@ def build_connections(objects: list[dict], namespace: str, visible_ids: set[str]
             parent = indexed.get((owner.get("kind"), owner.get("name")))
             if parent and owner.get("controller") is True and (not owner.get("uid") or owner["uid"] == parent.get("metadata", {}).get("uid")):
                 connect(owner["kind"], owner["name"], kind, name, "owns", "metadata.ownerReferences (controller)")
-        if kind in {"Deployment", "ReplicaSet", "Pod"}:
+        if kind in {"Deployment", "DaemonSet", "StatefulSet", "ReplicaSet", "Pod"}:
             spec = obj.get("spec", {}) if kind == "Pod" else obj.get("spec", {}).get("template", {}).get("spec", {})
             for config_name in config_references(spec):
+                if config_name == "kube-root-ca.crt":
+                    continue  # Shared service-account CA is not an application dependency.
                 connect("ConfigMap", config_name, kind, name, "configures", "Pod volume / env / envFrom ConfigMap reference")
         if kind == "Service":
             selector = obj.get("spec", {}).get("selector", {})

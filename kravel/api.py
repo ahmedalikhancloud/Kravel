@@ -17,6 +17,9 @@ from .tools import discover_issues, enforce_read_scope, execute_read_tool
 from .utils import safe_service_url
 from .workflows import WorkflowManager
 from .guardrails import public_evidence
+from .scenarios import catalog as scenario_catalog, VERSION as SCENARIO_VERSION
+from .retrieval import retrieve
+from .remediation import load_profiles
 
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
@@ -29,6 +32,7 @@ WEB_ASSETS = {
     "/ui/topology.mjs": ("topology.mjs", "text/javascript; charset=utf-8"),
     "/ui/demo.mjs": ("demo.mjs", "text/javascript; charset=utf-8"),
     "/ui/observability.mjs": ("observability.mjs", "text/javascript; charset=utf-8"),
+    "/ui/runbooks.mjs": ("runbooks.mjs", "text/javascript; charset=utf-8"),
     "/ui/vendor/three.module.min.js": ("vendor/three.module.min.js", "text/javascript; charset=utf-8"),
     "/ui/vendor/three.core.min.js": ("vendor/three.core.min.js", "text/javascript; charset=utf-8"),
     "/ui/vendor/OrbitControls.js": ("vendor/OrbitControls.js", "text/javascript; charset=utf-8"),
@@ -140,6 +144,13 @@ def create_server(store, config, kube):
                         raise ValueError("Invalid evaluation job ID")
                     return self.send_json(200, _evaluation_request(config, "/v1/jobs/" + job_id))
                 namespace = query.get("namespace", config.default_namespace)
+                if path == "/v1/runbooks":
+                    cases = scenario_catalog()
+                    return self.send_json(200, {"scenarios": cases, "version": SCENARIO_VERSION,
+                        "counts": {group: sum(c["group"] == group for c in cases) for group in ("common", "difficult")},
+                        "notice": "Curated coverage, not a universal production frequency ranking. Knowledge never grants mutation permissions."})
+                if path == "/v1/runbooks/search":
+                    return self.send_json(200, retrieve(query.get("q", ""), limit=6))
                 if path == "/v1/demo-session":
                     return self.send_json(200, {"session": store.demo_session(), "historyPreserved": True})
                 if path == "/v1/cluster":
@@ -181,11 +192,14 @@ def create_server(store, config, kube):
                             unavailable.append("operator audit")
                     return self.send_json(200, {"entries": sorted(entries, key=lambda item: item.get("at", ""), reverse=True)[:300], "unavailable": unavailable})
                 if path == "/v1/capabilities":
+                    enrolled = load_profiles()
                     return self.send_json(200, {
                         "agent": {"mode": "read-only", "allowed": ["get", "list", "watch", "pods/log"], "denied": ["secrets", "pods/exec", "create", "update", "patch", "delete"]},
                         "broker": {
                             "namespace": "kravel-demo", "verbs": ["get", "patch"],
                             "resources": {"deployments": ["oom-demo", "image-demo", "crash-demo", "config-demo"], "configmaps": ["config-demo"], "services": ["demo-gateway"]},
+                            "enrolledProfiles": [{k: p[k] for k in ("id", "kind", "name", "scenarioId")} for p in enrolled],
+                            "novelRepairs": "Structured drafts only; enrolled named fields + server dry-run + human approval required",
                             "requiresHumanApproval": True, "approvalTimeoutSeconds": 300,
                         },
                         "console": {"mode": "human-only", "namespace": "kravel-demo", "shell": False, "agentAccess": False, "writesRequirePreviewConfirmation": True},
@@ -242,6 +256,16 @@ def create_server(store, config, kube):
                     name = str(body.get("tool") or "")
                     return self.send_json(200, self.read_tool(name, body.get("arguments") or {}, namespace))
                 if path == "/v1/proposals":
+                    if "draftId" in body:
+                        run = store.workflow(str(body.get("runId", "")))
+                        if not run or run["kind"] != "investigation" or run["status"] != "completed" or run["payload"].get("disposition") == "blocked":
+                            raise ValueError("Choose a completed, permitted investigation with an evidence-linked draft")
+                        draft = next((d for d in run["payload"].get("draftRepairs", []) if d["id"] == body["draftId"]), None)
+                        if not draft:
+                            raise ValueError("Draft was not recorded by this investigation")
+                        proposal = _broker_request(config, "/v1/proposals", "POST", {"draft": draft["draft"], "namespace": run["namespace"], "actor": "human-requested-draft-review"})
+                        store.record("debugger", "draft.forwarded", actor="operator", resource=proposal.get("resource", ""), details={"proposalId": proposal.get("id", ""), "runId": run["id"]})
+                        return self.send_json(201, proposal)
                     payload = {"fixId": str(body.get("fixId") or ""), "namespace": namespace, "actor": "kravel-debugger"}
                     proposal = _broker_request(config, "/v1/proposals", "POST", payload)
                     store.record("debugger", "proposal.forwarded", actor="operator", resource=proposal.get("resource", ""), outcome=proposal.get("status", "pending"), details={"proposalId": proposal.get("id", ""), "fixId": payload["fixId"]})

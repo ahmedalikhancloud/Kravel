@@ -8,6 +8,15 @@ const resources = ["Deployment/api", "ReplicaSet/api-v1", "Pod/api-pod", "Config
 const edge = (source, target, relation) => ({source: `demo/${source}`, target: `demo/${target}`, relation});
 const connections = [edge("Deployment/api", "ReplicaSet/api-v1", "owns"), edge("ReplicaSet/api-v1", "Pod/api-pod", "owns"), edge("ConfigMap/config", "Pod/api-pod", "configures"), edge("Service/gateway", "Pod/api-pod", "selects")];
 
+test("DaemonSets and StatefulSets are controller roots with selectable owned Pods", () => {
+  const items = ["DaemonSet/logs", "Pod/log-node", "StatefulSet/db", "Pod/db-0"].map((value) => { const [kind, name] = value.split("/"); return {kind, name, namespace: "demo"}; });
+  const links = [edge("DaemonSet/logs", "Pod/log-node", "owns"), edge("StatefulSet/db", "Pod/db-0", "owns")];
+  const layout = layoutTopology(items, links);
+  assert.equal(layout.get("demo/Pod/log-node").group, "demo/DaemonSet/logs");
+  assert.equal(layout.get("demo/Pod/db-0").group, "demo/StatefulSet/db");
+  assert.equal(matchingResources(items, "", "controllers").length, 2);
+});
+
 test("five kinds share the actual controller root and occupy separate lanes", () => {
   const layout = layoutTopology(resources, connections);
   assert.equal(layout.size, 5);

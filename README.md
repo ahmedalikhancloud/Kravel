@@ -1,5 +1,11 @@
 # Kravel
 
+Karl now has a searchable **50-case production field guide**, local runbook RAG,
+bounded public documentation lookup and evidence-linked **novel repair drafts**.
+Execution remains restricted to operator-enrolled named resources/fields, server
+dry-run and a separate human approval. Hard node, control-plane and data recovery
+cases remain operator-led. See [repair coverage and Bash enrollment](docs/repair-coverage.md).
+
 Kravel is a local, guarded Kubernetes debugger built for a live demo. Karl—the pixel-art copilot—can inspect Pods, controllers, ConfigMaps, Events, and bounded logs through a strictly read-only ServiceAccount. A separate approval broker can repair five disposable demo failures, but only after Kubernetes server-side dry-run succeeds and a human approves within five minutes. Actual investigation and repair stages stay visible, followed by independent read-only recovery verification.
 
 The main browser UI renders the live namespace as a navigable WebGL 3D observatory. Orbit, pan, scroll to zoom, and click a Pod, Deployment, ReplicaSet, ConfigMap, or Service to inspect its sanitized manifest, Events, describe output, and connected Pod logs. Directional links use actual controller owner references, ConfigMap references, and Service selectors; they do not claim measured network traffic. All graphics libraries are bundled locally—no CDN, external fonts, or new credentials.

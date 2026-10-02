@@ -13,6 +13,8 @@ from .fixes import get_fix
 from .guardrails import public_evidence
 from .tracing import MlflowTracer
 from .utils import safe_service_url
+from .drafts import resolve_proposal
+from .diagnostics import ready_pod
 
 
 def contains_patch(actual, expected):
@@ -28,7 +30,7 @@ def contains_patch(actual, expected):
 
 def recovery_observation(kube, proposal):
     namespace = proposal["namespace"]
-    fix = get_fix(proposal["fix_id"], namespace, proposal["id"])
+    fix = resolve_proposal(proposal)
     applied = proposal.get("result", {}).get("operations", [])
     if len(applied) != len(fix["operations"]):
         return False, {"reason": "Not all reviewed operations have an acceptance result."}
@@ -52,16 +54,33 @@ def recovery_observation(kube, proposal):
             details.append({"resource": f"Deployment/{operation['name']}", "generation": generation, "observedGeneration": status.get("observedGeneration"), "currentPods": [p["metadata"]["name"] for p in current_pods], "ready": bool(ready)})
             if not ready:
                 return False, {"checks": details, "reason": "Waiting for applied-generation rollout and owned current Pods to become Ready."}
+        elif operation["kind"] == "daemonsets":
+            status = obj.get("status", {})
+            generation, desired = accepted.get("generation"), status.get("desiredNumberScheduled", 0)
+            pod_result = kube.list_resources("pods", namespace, limit=100)
+            pods = [p for p in pod_result["items"] if not p.get("metadata", {}).get("deletionTimestamp") and any(o.get("uid") == metadata["uid"] and o.get("controller") is True for o in p.get("metadata", {}).get("ownerReferences", []))]
+            ready = not pod_result.get("truncated") and desired > 0 and len(pods) == desired and all(ready_pod(p) and contains_patch(p.get("spec", {}), obj.get("spec", {}).get("template", {}).get("spec", {})) for p in pods)
+            ready = ready and generation is not None and status.get("observedGeneration", 0) >= generation and all(status.get(k, 0) == desired for k in ("currentNumberScheduled", "updatedNumberScheduled", "numberReady", "numberAvailable")) and status.get("numberMisscheduled", 0) == 0
+            details.append({"resource": f"DaemonSet/{operation['name']}", "generation": generation, "currentPods": [p["metadata"]["name"] for p in pods], "ready": bool(ready)})
+            if not ready:
+                return False, {"checks": details, "reason": "Waiting for current-generation DaemonSet Pods on every intended node."}
         elif operation["kind"] == "services":
             slices = kube.list_resources("endpointslices", namespace, selector=f"kubernetes.io/service-name={operation['name']}", limit=100)["items"]
-            pods = kube.list_resources("pods", namespace, selector="app=net-demo", limit=100)["items"]
+            selector = obj.get("spec", {}).get("selector", {})
+            if not selector:
+                return False, {"reason": "Selectorless Service needs operator-led endpoint and traffic verification."}
+            pods = kube.list_resources("pods", namespace, selector=",".join(f"{k}={v}" for k, v in sorted(selector.items())), limit=100)["items"]
             pod_uids = {p["metadata"]["uid"] for p in pods if not p["metadata"].get("deletionTimestamp") and p.get("status", {}).get("phase") == "Running" and bool(p.get("status", {}).get("containerStatuses")) and all(c.get("ready") for c in p["status"]["containerStatuses"])}
             ready = any((e.get("conditions") or {}).get("ready") is True and (e.get("targetRef") or {}).get("uid") in pod_uids for s in slices for e in (s.get("endpoints") or []))
-            details.append({"resource": "Service/demo-gateway", "readyEndpoints": ready, "trafficProbe": "Not performed; Pod HTTP readiness is reported by Kubernetes."})
+            details.append({"resource": f"Service/{operation['name']}", "readyEndpoints": ready, "trafficProbe": "Not performed; Pod readiness is reported by Kubernetes. Port/listener correctness requires an operator traffic check."})
             if not ready:
                 return False, {"checks": details, "reason": "Waiting for Ready endpoints to the observed HTTP workload."}
-        else:
+        elif operation["kind"] == "configmaps":
             details.append({"resource": f"ConfigMap/{operation['name']}", "reviewedFieldsMatch": True})
+            if len(fix["operations"]) == 1:
+                return False, {"checks": details, "reason": "Configuration fields match, but consumer reload/application health requires operator verification; not claiming workload recovery."}
+        else:
+            return False, {"reason": "Unsupported resource recovery checks; operator verification required."}
     return True, {"checks": details, "reason": "Reviewed fields and current workload readiness observed."}
 
 

@@ -2,7 +2,7 @@ import * as THREE from "./vendor/three.module.min.js";
 import { OrbitControls } from "./vendor/OrbitControls.js";
 import { layoutTopology, resourceId } from "./topology.mjs";
 
-const colors = {Pod: 0x82aeff, Deployment: 0x8de5cf, ReplicaSet: 0x77b9c6, ConfigMap: 0xefc581, Service: 0xbcadff};
+const colors = {Pod: 0x82aeff, Deployment: 0x8de5cf, DaemonSet: 0xfaafce, StatefulSet: 0xafa5ff, ReplicaSet: 0x77b9c6, ConfigMap: 0xefc581, Service: 0xbcadff};
 const healthColors = {healthy: 0x8de5cf, warning: 0xefc581, critical: 0xff8293};
 const linkColors = {owns: 0x8de5cf, configures: 0xefc581, selects: 0xbcadff};
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -26,7 +26,7 @@ function createModel(resource) {
     group.add(mesh(new THREE.BoxGeometry(.67, .27, .12), 0x14263c, [0, 1.06, .43]));
     [-.16, .16].forEach((x) => group.add(mesh(new THREE.BoxGeometry(.08, .07, .05), 0xd4f7ff, [x, 1.08, .51])));
     [-.28, .28].forEach((x) => group.add(mesh(new THREE.BoxGeometry(.2, .12, .3), color, [x, .31, .14])));
-  } else if (resource.kind === "Deployment") {
+  } else if (["Deployment", "DaemonSet", "StatefulSet"].includes(resource.kind)) {
     for (let i = 0; i < 3; i++) {
       const cube = mesh(new THREE.BoxGeometry(.88, .33, .88), color, [0, .52 + i * .42, 0]);
       cube.rotation.y = Math.PI / 4; group.add(cube);

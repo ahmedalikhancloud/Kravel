@@ -17,7 +17,7 @@ class FakeKube:
     def get_resource(self, kind, name, namespace):
         key = (kind, name, namespace)
         if key not in self.objects:
-            self.objects[key] = {"kind": "ConfigMap" if kind == "configmaps" else "Deployment", "metadata": {"name": name, "uid": f"uid-{name}", "resourceVersion": "7"}, **({"data": {"MODE": "broken"}} if kind == "configmaps" else {"spec": {"replicas": 1}})}
+            self.objects[key] = {"kind": "ConfigMap" if kind == "configmaps" else "Deployment", "metadata": {"name": name, "uid": f"uid-{name}", "resourceVersion": "7"}, **({"data": {"MODE": "broken"}} if kind == "configmaps" else {"spec": {"replicas": 1, "template": {"spec": {"containers": [{"name": name, "image": "busybox:1.36"}]}}}})}
         return {"object": deepcopy(self.objects[key])}
 
     def patch(self, kind, name, namespace, patch, *, content_type, dry_run):
