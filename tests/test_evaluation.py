@@ -47,6 +47,39 @@ def test_all_public_prebuilt_scorers_are_configured_and_local():
     assert items["PIIDetection"](outputs="Contact private@example.invalid").value == "no"
 
 
+def test_observation_catalog_resolves_effective_experiments_without_exposing_service_urls():
+    from types import SimpleNamespace
+    worker = object.__new__(EvaluationWorker)
+    lookups = []
+    worker.model = "fixture-local"
+    worker.source_experiment = "Kravel Guarded Debugger (HTTP artifacts)"
+    worker.experiment = "Separate evaluation experiment"
+    worker.tracer = SimpleNamespace(experiment_id="12", destination_experiment_id="9", url="http://private-internal.invalid")
+    def lookup(name):
+        lookups.append(name)
+        return SimpleNamespace(experiment_id="37")
+    search_calls = []
+    preview_run_id = "12345678-1234-1234-1234-123456789abc"
+    def search(**kwargs):
+        search_calls.append(kwargs)
+        return [SimpleNamespace(info=SimpleNamespace(trace_metadata={"kravel.run_id": preview_run_id}, request_preview="Why is my Pod failing? password=private-fixture-value"))]
+    worker.mlflow = SimpleNamespace(__version__="3.16.0", get_experiment_by_name=lookup, search_traces=search)
+    result = worker.catalog()
+    assert lookups == [worker.source_experiment]
+    assert result["experiments"] == {
+        "source": {"id": "37", "name": worker.source_experiment},
+        "evaluations": {"id": "12", "name": worker.experiment},
+        "judges": {"id": "9", "name": "Kravel Local Judges"}}
+    assert result["mlflowVersion"] == "3.16.0" and result["advisoryOnly"] is True
+    assert "private-internal" not in json.dumps(result)
+    assert search_calls[0]["include_spans"] is False and search_calls[0]["max_results"] == 30
+    assert result["requestPreviews"][0]["runId"] == preview_run_id
+    assert "private-fixture-value" not in json.dumps(result)
+    worker.mlflow.get_experiment_by_name = lambda _: None
+    assert worker.catalog()["experiments"]["source"]["id"] == ""
+    assert worker.catalog()["requestPreviews"] == []
+
+
 def test_missing_references_and_history_are_skipped_not_fake_scores():
     options = dict(profile="all", has_trace=True, has_retrieval=True, has_tools=True, turns=1,
                    question="Inspect the Pod", expectations={})

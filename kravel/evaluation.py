@@ -131,6 +131,32 @@ class EvaluationWorker:
             rows = self.db.execute("SELECT payload FROM jobs ORDER BY rowid DESC LIMIT 100").fetchall()
         return [j for row in rows if (j := json.loads(row[0])) and (not run_id or j["runId"] == run_id)]
 
+    def catalog(self):
+        # Resolve the effective experiment (including an HTTP-artifact migration)
+        # with a read-only lookup. Never expose configured internal URLs or keys.
+        source = self.mlflow.get_experiment_by_name(self.source_experiment)
+        previews = []
+        if source:
+            try:
+                # Metadata previews only: do not download historical logs/spans
+                # or create a model call just to give the picker readable labels.
+                traces = self.mlflow.search_traces(locations=[source.experiment_id],
+                    filter_string="tags.`kravel.kind` = 'investigation'", max_results=30,
+                    return_type="list", include_spans=False)
+                for trace in traces:
+                    run_id = trace.info.trace_metadata.get("kravel.run_id", "")
+                    preview = trace.info.request_preview
+                    if re.fullmatch(r"[a-f0-9-]{36}", run_id) and preview:
+                        previews.append({"runId": run_id, "question": trace_content(preview, 2000, 400)})
+            except Exception:
+                pass  # Missing previews never invalidate recorded trace links.
+        return {"scorers": catalog(self.model), "model": self.model, "advisoryOnly": True,
+                "mlflowVersion": self.mlflow.__version__, "requestPreviews": previews,
+                "experiments": {
+                    "source": {"id": source.experiment_id if source else "", "name": self.source_experiment},
+                    "evaluations": {"id": self.tracer.experiment_id, "name": self.experiment},
+                    "judges": {"id": self.tracer.destination_experiment_id, "name": "Kravel Local Judges"}}}
+
     def enqueue(self, body):
         body = validate_request(body)
         with self.lock:
@@ -299,7 +325,8 @@ class EvaluationWorker:
         has_tools = any(s.span_type == "TOOL" for s in view.data.spans)
         session_has_tools = any(s.span_type == "TOOL" for t in session for s in t.data.spans)
         selected = []
-        job.update(status="running", startedAt=to_iso(), sessionTraceIds=[t.info.trace_id for t in session], scorers=[])
+        job.update(status="running", startedAt=to_iso(), sourceExperimentId=view.info.experiment_id,
+                   sessionTraceIds=[t.info.trace_id for t in session], scorers=[])
         job["scorerExperimentId"] = self.tracer.destination_experiment_id
         for name, builtin in self.scorers.items():
             reason = skip_reason(name, profile=job["profile"], has_trace=True, has_retrieval=has_retrieval,
@@ -351,7 +378,10 @@ def create_evaluation_server(worker, host="127.0.0.1", port=8083):
             if path == "/healthz":
                 return self.send(200, {"status": "ok", "active": worker.active.is_set(), "kubernetesAccess": False})
             if path == "/v1/catalog":
-                return self.send(200, {"scorers": catalog(worker.model), "model": worker.model, "advisoryOnly": True})
+                try:
+                    return self.send(200, worker.catalog())
+                except Exception:
+                    return self.send(503, {"error": "Tracking catalog unavailable; reconnect local MLflow and retry."})
             if path.startswith("/v1/jobs/"):
                 job = worker.get(path.split("/")[-1])
                 return self.send(200 if job else 404, job or {"error": "not_found"})

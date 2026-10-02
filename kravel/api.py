@@ -28,6 +28,7 @@ WEB_ASSETS = {
     "/ui/scene.js": ("scene.js", "text/javascript; charset=utf-8"),
     "/ui/topology.mjs": ("topology.mjs", "text/javascript; charset=utf-8"),
     "/ui/demo.mjs": ("demo.mjs", "text/javascript; charset=utf-8"),
+    "/ui/observability.mjs": ("observability.mjs", "text/javascript; charset=utf-8"),
     "/ui/vendor/three.module.min.js": ("vendor/three.module.min.js", "text/javascript; charset=utf-8"),
     "/ui/vendor/three.core.min.js": ("vendor/three.core.min.js", "text/javascript; charset=utf-8"),
     "/ui/vendor/OrbitControls.js": ("vendor/OrbitControls.js", "text/javascript; charset=utf-8"),

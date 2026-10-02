@@ -65,3 +65,23 @@ def test_operator_identity_is_separate_and_not_in_guided_ui():
     assert 'event.source !== elements.labControls.contentWindow' in app_js
     assert 'id="runSteps"' in html and 'id="demoGuide"' in html
     assert 'Human console' not in html and 'Audit trail' not in html
+
+
+def test_observability_hub_has_guided_contextual_navigation_without_guessing_ids():
+    from kravel.api import WEB_ASSETS
+    html = (ROOT / "kravel/web/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "kravel/web/app.js").read_text(encoding="utf-8")
+    links = (ROOT / "kravel/web/observability.mjs").read_text(encoding="utf-8")
+    assert WEB_ASSETS["/ui/observability.mjs"][0] == "observability.mjs"
+    for element_id in ("observability", "observeRequest", "requestShortcuts", "evaluationHistory", "evaluationLinks", "evaluationSkippedGroup", "refreshInsights"):
+        assert f'id="{element_id}"' in html
+    assert "60-second guide" in html and "Show execution timeline" in html
+    assert "bash demo/local/demo.sh --connect-only" in html
+    assert "noopener noreferrer" in js and "aria-disabled" in js
+    assert 'payload.experimentId || "1"' not in js
+    assert "selectedEvaluationId=" not in js
+    assert "innerHTML" not in js and "innerHTML" not in links
+    assert "pendingEvaluationRuns" in js and 'chooseEvaluation(evaluationJobs, selectedEvaluationId)' in js
+    assert 'scorerExperimentId, row.traceId' in js
+    assert 'state.currentRun?.id !== state.runId' in js
+    assert 'state.currentRun.id !== state.runId' in js

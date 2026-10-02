@@ -121,7 +121,14 @@ This is a layered demo security design, **not enterprise certification or an unb
 
 ## 7. Show what happened in MLflow and Grafana
 
-Open **Dashboards → MLflow**, choose **Kravel Guarded Debugger → Traces**, and open the new request trace. In **Details & Timeline**, select:
+On Kravel, choose **Observe** (or **Insights → Start here**) to open **A window into Karl’s work**. Pick the question you want to follow, then:
+
+- **This question’s trace** opens its exact MLflow trace, including the recorded question and answer.
+- **Follow its flow** opens Kravel’s investigation checklist; in MLflow, enable **Show execution timeline** for the span-by-span timing view.
+- **See / run evaluations** opens checks for that answer. Browsing does not invoke a model; only the evaluation buttons start judging.
+- The three cards take you directly to Karl’s experiment/traces, evaluation runs/judge traces, and Kravel’s provisioned Grafana dashboard. Experiment IDs are resolved from the running tracker, including the `(HTTP artifacts)` migration—not hardcoded.
+
+The same shortcuts appear beside every investigation, and newly answered chat messages have an exact-trace link. In the trace’s **Inputs / Outputs** view, select:
 
 - **kravel.debugger**: redacted question, target, response, routing policy, disposition, and whether the model ran.
 - **guardrail.input**: redaction/quarantine decisions and findings.
@@ -136,11 +143,11 @@ The trace's Summary previews the question and answer. Older traces cannot recove
 
 Local investigation content uses `KRAVEL_MLFLOW_CONTENT_MODE=redacted` and `KRAVEL_MLFLOW_TRACE_DETAIL=deep`: sanitized text fields up to 32,000 characters and span payloads up to 192,000, with labeled truncation. Standard mode uses 6,000/24,000. You can also inspect `evidence.model_context` (the exact bounded retrieved context), `graph.route`, tool schemas and `tool.authorization`. Redaction is best-effort; use non-sensitive demo questions/workloads and review traces before sharing. `metadata` mode keeps timings/counts without content; no raw mode is offered. Repair traces remain metadata-only and are linked by proposal ID.
 
-After Karl answers, expand **Evaluate Karl’s answer · local MLflow judges** in the investigation. Start **Quick evaluation** to see 3 local LLM judges plus 3 deterministic checks. **All applicable scorers** exposes all 24 built-ins, with honest skips for missing references or conversation history. Add independently verified reference facts/answers in the optional section. Scores do not grant repair permission. Expand each result to see its rationale/timing and open its actual judge prompt/response trace in **Kravel Local Judges**. Evaluation runs/assessments are linked to the original request in **Kravel Guarded Debugger**.
+After Karl answers, expand **Evaluate Karl’s answer · local MLflow judges** in the investigation. Start **Quick evaluation** to see 3 local LLM judges plus 3 deterministic checks. **All applicable scorers** exposes all 24 built-ins, with honest skips for missing references or conversation history. Add independently verified reference facts/answers in the optional section. Scores do not grant repair permission. Use **Saved evaluations for this question** to revisit earlier Quick/All jobs without making new model calls (recent 10 jobs). Polling preserves your selection. **Scores & evaluated traces**, **Saved evaluation reports**, and **Original question & answer** open the matching records. Expand a scorer → **Inspect judge request & result** to open its exact trace in **Kravel Local Judges**. Multi-turn jobs additionally link the earliest evaluated turn where MLflow attaches session assessments.
 
 Reuse local Qwen by default; no cloud key or second download is required. All takes longer, and same-model judging is biased. See [the evaluation demo guide](docs/evaluation.md) for upgrading an existing installation without a reset, choosing another already-downloaded local model, every scorer's requirements, and privacy/measurement limits.
 
-In **Dashboards → Grafana**, the provisioned **Kravel Guarded Debugger** dashboard shows model/guardrail/tool/tracing latency, real workflow stage timings, approvals, recovery, and retained audit metrics. Request-scope latency is separately visible in its MLflow span and workflow step. Audit logging stays enabled behind the scenes even though its feed is removed from Kravel.
+In **Observe → Where did the time go?**, **Open Kravel’s Grafana dashboard** opens the provisioned **Kravel Guarded Debugger** dashboard directly. It shows model/guardrail/tool/tracing latency, real workflow stage timings, approvals, recovery, and retained audit metrics. Request-scope latency is separately visible in its MLflow span and workflow step. Audit logging stays enabled behind the scenes even though its feed is removed from Kravel. The on-page 60-second guide explains what to look for, and reconnect instructions preserve labs and history.
 
 ## 8. Reset for the next audience
 
