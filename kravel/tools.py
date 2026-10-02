@@ -65,6 +65,12 @@ def _container_issue(pod: dict, namespace: str = "kravel-demo"):
         current = status.get("state", {})
         waiting = current.get("waiting", {})
         terminated = current.get("terminated", {})
+        # lastState and restartCount are history, not an active incident. A
+        # currently Ready/running container must not inherit an old repair card
+        # after Docker restarts or a successful recovery. Keep that history in
+        # the resource detail/trace; a subsequent failure is observed on refresh.
+        if status.get("ready") is True and "running" in current:
+            continue
         if last.get("reason") == "OOMKilled" or terminated.get("reason") == "OOMKilled":
             return "oomkilled", "fix_oom_memory" if is_demo and app == "oom-demo" else "", f"container {status.get('name')} terminated with OOMKilled"
         reason = waiting.get("reason", "")

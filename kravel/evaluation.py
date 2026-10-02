@@ -255,12 +255,17 @@ class EvaluationWorker:
                             "kravel.advisory_only": "true"}
                     row.update(status="error" if any(f.error for f in feedbacks) else "completed",
                         feedback=[trace_content(f.to_dictionary(), 24_000, 6000) for f in feedbacks], traceId=self.tracer.trace_id,
-                        modelCalls=transport["calls"])
+                        modelCalls=transport.get("inferenceCalls", transport["calls"]), transportAttempts=transport["calls"])
                     if transport.get("errors"):
                         row["transportErrors"] = transport["errors"]
-                    span.set_content_outputs({"feedback": row["feedback"], "status": row["status"], "model_calls": row["modelCalls"]})
+                    if transport.get("rejections"):
+                        row["rejectionReasons"] = transport["rejections"]
+                    span.set_content_outputs({"feedback": row["feedback"], "status": row["status"], "model_calls": row["modelCalls"], "transport_attempts": row["transportAttempts"], "rejection_reasons": row.get("rejectionReasons", [])})
             except Exception as exc:
-                row.update(status="error", error="Local scorer failed: " + type(exc).__name__, traceId=self.tracer.trace_id, modelCalls=transport["calls"])
+                reasons = transport.get("rejections", [])
+                row.update(status="error", error="Local scorer failed: " + type(exc).__name__ + ("; " + ", ".join(reasons) if reasons else ""),
+                    traceId=self.tracer.trace_id, modelCalls=transport.get("inferenceCalls", transport["calls"]),
+                    transportAttempts=transport["calls"], rejectionReasons=reasons)
                 feedbacks = [Feedback(name=builtin.name, error=AssessmentError("LOCAL_JUDGE_ERROR", row["error"]),
                     metadata={"kravel.job_id": job["id"], "kravel.advisory_only": "true", "mlflow.assessment.scorerTraceId": self.tracer.trace_id})]
             finally:

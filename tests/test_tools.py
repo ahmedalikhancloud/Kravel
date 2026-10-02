@@ -7,7 +7,7 @@ class FakeKube:
     def list_resources(self, kind, namespace, **_kwargs):
         if kind == "pods":
             return {"items": [
-                self.pod("oom-demo-a", "oom-demo", last_reason="OOMKilled"),
+                self.pod("oom-demo-a", "oom-demo", waiting="CrashLoopBackOff", last_reason="OOMKilled"),
                 self.pod("image-demo-a", "image-demo", waiting="ImagePullBackOff"),
                 self.pod("crash-demo-a", "crash-demo", waiting="CrashLoopBackOff"),
                 self.pod("config-demo-a", "config-demo", waiting="CrashLoopBackOff"),
@@ -62,6 +62,20 @@ def test_generic_failure_is_diagnosed_without_offering_a_demo_fix():
     issue_type, fix_id, _evidence = _container_issue(pod)
     assert issue_type == "imagepullbackoff"
     assert fix_id == ""
+
+
+@pytest.mark.parametrize("reason,exit_code", [("Error", 255), ("OOMKilled", 137)])
+def test_ready_running_container_does_not_inherit_historical_failure(reason, exit_code):
+    pod = FakeKube.pod("oom-demo-a", "oom-demo", last_reason=reason)
+    status = pod["status"]["containerStatuses"][0]
+    status["lastState"]["terminated"]["exitCode"] = exit_code
+    status["restartCount"] = 5
+    assert _container_issue(pod) == ("", "", "")
+    # History is retained, not overwritten to make the cluster look healthy.
+    assert status["lastState"]["terminated"]["reason"] == reason
+    status["state"] = {"waiting": {"reason": "CrashLoopBackOff"}}
+    status["ready"] = False
+    assert _container_issue(pod)[0] == ("oomkilled" if reason == "OOMKilled" else "crashloopbackoff")
 
 
 def test_fix_suggestions_require_matching_failure_and_demo_namespace():

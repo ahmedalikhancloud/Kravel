@@ -22,6 +22,13 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ValueError("Local judge redirects are forbidden")
 
 
+class JudgeRequestRejected(ValueError):
+    """Fixed policy codes only; never include user content or upstream errors."""
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
 def local_model_url(value):
     parsed = urlparse(value)
     if (parsed.scheme not in {"http", "https"} or parsed.hostname not in
@@ -58,20 +65,20 @@ class JudgeBridge:
                 started = time.perf_counter()
                 try:
                     if self.path != "/v1/chat/completions":
-                        raise ValueError("Only chat completions are permitted")
+                        raise JudgeRequestRejected("endpoint_policy")
                     length = int(self.headers.get("Content-Length", "0"))
                     if not 0 < length <= 120_000:
-                        raise ValueError("Judge request exceeds transport budget")
+                        raise JudgeRequestRejected("request_body_budget")
                     body = json.loads(self.rfile.read(length))
                     with bridge.lock:
                         active = bridge.active
                         if not active or active["calls"] >= 3 or time.monotonic() > active["deadline"]:
-                            raise ValueError("Judge call budget exhausted or evaluation inactive")
+                            raise JudgeRequestRejected("call_budget_or_inactive")
                         active["calls"] += 1
                     if body.get("model") != bridge.model or body.get("stream") or not isinstance(body.get("messages"), list):
-                        raise ValueError("Only the configured non-streaming local judge model is permitted")
+                        raise JudgeRequestRejected("model_request_policy")
                     if len(json.dumps(body["messages"])) > 48_000:
-                        raise ValueError("Judge context exceeds transport budget; no silent truncation")
+                        raise JudgeRequestRejected("context_budget")
                     body["temperature"] = 0
                     body.pop("max_completion_tokens", None)
                     body["max_tokens"] = 800
@@ -85,6 +92,8 @@ class JudgeBridge:
                     span.set_attribute("kravel.judge_call", active["calls"])
                     request = urllib.request.Request(bridge.base_url + "/chat/completions",
                         data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+                    with bridge.lock:
+                        active["inferenceCalls"] += 1
                     with bridge.opener.open(request, timeout=bridge.timeout) as response:
                         raw = response.read(2_000_001)
                     if len(raw) > 2_000_000:
@@ -101,13 +110,17 @@ class JudgeBridge:
                 except Exception as exc:
                     if active:
                         active["errors"].append(type(exc).__name__)
+                        if isinstance(exc, JudgeRequestRejected):
+                            active["rejections"].append(exc.code)
                     # Do not store upstream bodies, URLs, raw exceptions or stack locals.
                     if span:
                         span.end(outputs={"error_type": type(exc).__name__, "note": "Local judge inference failed; no score was fabricated."}, status="ERROR")
                     elif active:
                         import mlflow
                         rejected = mlflow.start_span_no_context("judge.transport_rejected", "GUARDRAIL", parent_span=active["parent"])
-                        rejected.end(outputs={"decision": "deny", "error_type": type(exc).__name__, "note": "Fixed local model, request budget or transport check failed; no cloud fallback."}, status="ERROR")
+                        rejected.end(outputs={"decision": "deny", "error_type": type(exc).__name__,
+                            "reason_code": exc.code if isinstance(exc, JudgeRequestRejected) else "invalid_request",
+                            "model_invoked": False, "note": "Fixed local model, request budget or transport check failed; no cloud fallback."}, status="ERROR")
                     return self.send(400, {"error": {"message": "Local judge call failed: " + type(exc).__name__, "type": "local_judge_error"}})
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -122,7 +135,7 @@ class JudgeBridge:
         with self.lock:
             if self.active:
                 raise RuntimeError("Only one scorer can invoke the judge at a time")
-            context = {"parent": parent, "calls": 0, "errors": [], "deadline": time.monotonic()+150}
+            context = {"parent": parent, "calls": 0, "inferenceCalls": 0, "errors": [], "rejections": [], "deadline": time.monotonic()+150}
             self.active = context
         try:
             yield context

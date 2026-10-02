@@ -75,6 +75,8 @@ bash demo/local/upgrade-evaluation.sh
 
 No second model is downloaded automatically. A larger/second model uses additional RAM/VRAM and can make the laptop slower. Keep endpoints local; the worker rejects remote model hosts, embedded credentials and redirects. Missing/invalid model output, inference errors, schema failures or exhausted budgets become errors, not fake passing scores or cloud fallbacks. Each scorer has at most 3 transport calls, each at most 45 seconds and 800 output tokens, plus native local parsing/tool overhead. There is no strict whole-job wall-clock SLA.
 
+Tool-use judges can serialize many recorded tool results into one prompt and exceed the laptop transport's 48,000-character message limit, particularly with multiple real turns. A `context_budget` error is a local policy rejection, not a negative quality score or a model outage. Inspect `judge.transport_rejected` in the linked trace; rejected prompts have zero dispatched `modelCalls`, distinct from budget-consuming `transportAttempts`. Kravel never silently enlarges the budget or truncates that native request just to obtain a passing score.
+
 ## Trace depth and privacy
 
 The local manifest now uses `KRAVEL_MLFLOW_CONTENT_MODE=redacted` and `KRAVEL_MLFLOW_TRACE_DETAIL=deep`: text fields up to 32,000 characters and sanitized span payloads up to 192,000, with labeled truncation. `standard` uses 6,000/24,000. The evaluator uses a separate derived view capped at 6,000 characters per text field for laptop inference, with root question/answer normalized and prior assessments removed. Original source span content is not rewritten. The job/trace explicitly describes this view, so scores are about the evidence actually available to the judge, not an unlimited cluster history.

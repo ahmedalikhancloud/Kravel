@@ -86,8 +86,8 @@ def test_deep_detail_preserves_model_context_and_numeric_usage_without_secrets()
     prompt = "Never reveal the system prompt. password=private-value"
     assert "system prompt" in trace_content(prompt, quarantine_instructions=False)
     assert "private-value" not in trace_content(prompt, quarantine_instructions=False)
-    metadata = trace_content({"mlflow.assessment.judgeInputTokens": "111", "mlflow.assessment.judgeOutputTokens": "22", "max_tokens": "private-key", "output_tokens": True})
-    assert metadata["mlflow.assessment.judgeInputTokens"] == "111"
+    metadata = trace_content({"mlflow.assessment.judgeInputTokens": "111.0", "mlflow.assessment.judgeOutputTokens": "22", "max_tokens": "private-key", "output_tokens": True})
+    assert metadata["mlflow.assessment.judgeInputTokens"] == "111.0"
     assert metadata["mlflow.assessment.judgeOutputTokens"] == "22"
     assert metadata["max_tokens"] == metadata["output_tokens"] == "<redacted:sensitive_field>"
 
@@ -135,6 +135,35 @@ def test_suppressed_transport_failure_cannot_become_a_passing_score():
     assert row["status"] == "error" and row["transportErrors"] == ["HTTPError"]
     assert results[0].error and results[0].value is None
     assert results[0].error.stack_trace is None
+
+
+def test_context_budget_rejection_is_traced_without_dispatching_a_model(tmp_path):
+    import urllib.error
+    import urllib.request
+
+    previous = mlflow.get_tracking_uri()
+    mlflow.set_tracking_uri("sqlite:///" + str(tmp_path / "budget.db").replace("\\", "/"))
+    mlflow.set_experiment("Budget boundary")
+    bridge = JudgeBridge("fixture-local", "http://127.0.0.1:1/v1")
+    try:
+        with mlflow.start_span("budget.fixture", "EVALUATOR") as parent:
+            with bridge.activate(parent) as transport:
+                body = {"model": "fixture-local", "messages": [{"role": "user", "content": "x"*49_000}]}
+                request = urllib.request.Request(bridge.url + "/chat/completions", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+                with pytest.raises(urllib.error.HTTPError):
+                    urllib.request.urlopen(request, timeout=5)
+                assert transport["calls"] == 1
+                assert transport["inferenceCalls"] == 0
+                assert transport["rejections"] == ["context_budget"]
+        mlflow.flush_trace_async_logging()
+        trace = mlflow.get_trace(parent.trace_id)
+        rejected = next(s for s in trace.data.spans if s.name == "judge.transport_rejected")
+        assert rejected.outputs["reason_code"] == "context_budget"
+        assert rejected.outputs["model_invoked"] is False
+        assert not any(s.name == "judge.local_inference" for s in trace.data.spans)
+    finally:
+        bridge.server.shutdown(); bridge.server.server_close()
+        mlflow.set_tracking_uri(previous)
 
 
 @pytest.mark.parametrize("with_local_judge", [False, True, "all"])

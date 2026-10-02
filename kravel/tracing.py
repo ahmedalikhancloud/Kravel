@@ -31,7 +31,7 @@ def trace_content(value, max_characters=24_000, text_limit=6000, quarantine_inst
     def numeric_counter(key, value):
         # Only known usage counters may bypass credential-key redaction. MLflow
         # stores assessment metadata as strings; never exempt arbitrary text.
-        return key in counters and (type(value) in (int, float) or isinstance(value, str) and re.fullmatch(r"[0-9]{1,12}", value))
+        return key in counters and (type(value) in (int, float) or isinstance(value, str) and re.fullmatch(r"[0-9]{1,12}(?:\.[0-9]{1,6})?", value))
 
     def clean(item, depth=0):
         if depth > 12:
