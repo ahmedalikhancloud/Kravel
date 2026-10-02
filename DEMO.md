@@ -46,6 +46,12 @@ The Kravel page starts with a cluster explorer and five practice buttons. Invest
 
 ## 3. Meet the cluster
 
+Optional free RAG demonstration: once the demo is connected, run
+`bash demo/local/enable-rag.sh`, then `bash demo/local/demo.sh --connect-only`.
+Open **Karl’s knowledge lab** to search, inspect ranking stages and run the
+synthetic retrieval comparison. See [the five-minute knowledge-lab walkthrough](docs/knowledge-lab.md).
+This adds no paid services and does not reset your current labs.
+
 - A **Pod** is the small home where an application runs.
 - A **Deployment** keeps Pods running and manages their updates.
 - A **ConfigMap** holds application settings.

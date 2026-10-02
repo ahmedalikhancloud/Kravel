@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kravel-knowledge-data
+  namespace: kravel-observability
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 1Gi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kravel-knowledge
+  namespace: kravel-observability
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: kravel-knowledge}
+  template:
+    metadata:
+      labels: {app: kravel-knowledge}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: knowledge
+          image: kravel-retrieval:local
+          imagePullPolicy: Never
+          ports: [{name: http, containerPort: 8084}]
+          env:
+            - {name: KRAVEL_MLFLOW_URL, value: "http://kravel-mlflow.kravel-observability.svc.cluster.local:5000"}
+            - {name: HOME, value: /tmp}
+          resources:
+            requests: {cpu: 100m, memory: 512Mi}
+            limits: {cpu: "2", memory: 1536Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 3
+            failureThreshold: 100
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: temp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: kravel-knowledge-data}
+        - name: temp
+          emptyDir: {sizeLimit: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kravel-knowledge
+  namespace: kravel-observability
+spec:
+  type: ClusterIP
+  selector: {app: kravel-knowledge}
+  ports: [{name: http, port: 8084, targetPort: http}]

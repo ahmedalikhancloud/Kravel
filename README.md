@@ -26,6 +26,7 @@ The main browser UI renders the live namespace as a navigable WebGL 3D observato
 - Five-minute approval expiry, structured server dry-run, fixed repair catalog, and an append-only SQLite audit trail.
 - Prometheus, a provisioned Grafana dashboard, and persistent MLflow traces with nested spans for guardrails, Qwen calls, tools, and tracing overhead. Local investigation traces include bounded redacted questions, model messages/responses, evidence, and diagnoses; timing-only mode remains available.
 - Opt-in local MLflow LLM-as-a-Judge evaluations: all 24 pinned built-in scorers, independent-reference/session requirements, per-scorer rationale/latency and linked prompt/response traces. The isolated evaluator has no Kubernetes identity or repair authority. [Evaluation demo and upgrade guide](docs/evaluation.md).
+- Free CPU-only hybrid runbook RAG: BM25 + MiniLM vectors → RRF → cross-encoder, fingerprinted offline model artifacts, SQLite document-vector cache, collection scoping, stage-rank provenance and MLflow retrieval traces. The browser’s knowledge lab compares four retrieval variants on 26 authored synthetic questions. [Enable and demonstrate it](docs/knowledge-lab.md).
 - Independent OOMKilled, ImagePullBackOff, CrashLoopBackOff, bad ConfigMap, and Service-selector mismatch labs, with a working HTTP workload.
 - No Groq, Codespaces, hosted model, public callback URL, or API key required.
 
@@ -59,6 +60,15 @@ bash demo/local/reset.sh
 ```
 
 For the full walk-through, see [DEMO.md](DEMO.md).
+
+Enable the optional knowledge lab on an already running demo (does not reset labs or rotate approval credentials):
+
+```bash
+bash demo/local/enable-rag.sh
+bash demo/local/demo.sh --connect-only
+```
+
+First setup downloads public Apache-2.0 retrieval models without an account/key. Subsequent inference is offline and CPU-only; the GPU remains available to Qwen. The optional service has a 1.5 GiB memory ceiling. If unavailable, Karl reports keyword fallback honestly.
 
 ## Safety boundary
 

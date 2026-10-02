@@ -137,14 +137,14 @@ Dense retrieval helps paraphrases; RRF combines rankings without comparing raw
 BM25 and cosine scores; a cross-encoder reranks a bounded shortlist. This can help,
 but must be measured against BM25 instead of assumed to improve every query.
 
-The optional `retrieval` Python extra / `Dockerfile.retrieval` installs Sentence
-Transformers. Set `KRAVEL_RAG_EMBEDDING_PATH` and/or `KRAVEL_RAG_RERANKER_PATH` to
-existing **absolute local model directories inside the container**, mounted
-read-only by the operator. Models load on CPU with `local_files_only=True` and
-`trust_remote_code=False`; no runtime hub downloads. This is opt-in: provision
-compatible local models and their mounts before enabling it. It is not enabled by
-the normal prepare/upgrade script, to preserve laptop memory and demo latency.
-Missing optional models yield a visible lexical fallback, not a fake hybrid result.
+Run `bash demo/local/enable-rag.sh` on an existing local demo. `Dockerfile.retrieval`
+builds an isolated CPU-only Sentence Transformers service with two pinned public
+MiniLM model revisions and safe tensor weights. Startup verifies artifact hashes;
+models load with `local_files_only=True`, `trust_remote_code=False`, and offline
+environment settings. No Kubernetes ServiceAccount token is mounted. The normal
+prepare script preserves and refreshes a previously enabled service, but first-time
+hybrid setup remains opt-in. Missing/busy service yields an explicit keyword
+fallback, not a fake hybrid result. See [the knowledge lab](knowledge-lab.md).
 
 Only curated **document vectors** are cached in local SQLite. Operator questions,
 logs, credentials and cluster object snapshots are not added to this vector index.

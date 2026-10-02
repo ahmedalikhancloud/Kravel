@@ -65,6 +65,14 @@ kubectl apply -f "$KRAVEL_ROOT/deploy/evaluation-local.yaml"
 kubectl -n kravel-observability set env deployment/kravel-evaluator "KRAVEL_JUDGE_MODEL=${KRAVEL_JUDGE_MODEL:-$QWEN_MODEL}" >/dev/null
 rollout kravel-observability kravel-evaluator 6m
 
+if kubectl -n kravel-system get configmap kravel-knowledge-settings >/dev/null 2>&1; then
+  section "Refreshing previously enabled free hybrid retrieval; knowledge data is preserved"
+  docker build --file "$KRAVEL_ROOT/Dockerfile.retrieval" --tag kravel-retrieval:local "$KRAVEL_ROOT"
+  kubectl apply -f "$KRAVEL_ROOT/deploy/retrieval-local.yaml"
+  kubectl -n kravel-observability rollout restart deployment/kravel-knowledge >/dev/null
+  rollout kravel-observability kravel-knowledge 6m
+fi
+
 section "Checking local Qwen connectivity from the read-only agent"
 kubectl -n kravel-system exec deployment/kravel -- python -m kravel.cli check-llm
 

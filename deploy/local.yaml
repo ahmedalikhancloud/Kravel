@@ -157,6 +157,8 @@ spec:
           image: kravel:local
           imagePullPolicy: Never
           args: ["python", "-m", "kravel.main", "serve"]
+          envFrom:
+            - configMapRef: {name: kravel-knowledge-settings, optional: true}
           env:
             - {name: KRAVEL_HOST, value: "0.0.0.0"}
             - {name: KRAVEL_PORT, value: "8080"}

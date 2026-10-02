@@ -18,7 +18,7 @@ from .utils import safe_service_url
 from .workflows import WorkflowManager
 from .guardrails import public_evidence
 from .scenarios import catalog as scenario_catalog, VERSION as SCENARIO_VERSION
-from .retrieval import retrieve
+from .retrieval import retrieve, service_request as rag_request
 from .remediation import load_profiles
 from .drafts import repair_mode
 
@@ -160,7 +160,14 @@ def create_server(store, config, kube):
                         "counts": {group: sum(c["group"] == group for c in cases) for group in ("common", "difficult")},
                         "notice": "Curated coverage, not a universal production frequency ranking. Knowledge never grants mutation permissions."})
                 if path == "/v1/runbooks/search":
-                    return self.send_json(200, retrieve(query.get("q", ""), limit=6))
+                    return self.send_json(200, retrieve(query.get("q", ""), limit=6, collection=query.get("collection", "all")))
+                if path == "/v1/rag/status":
+                    try:
+                        return self.send_json(200, rag_request("/v1/status", timeout=5))
+                    except Exception as exc:
+                        return self.send_json(200, {"ready": False, "mode": "bm25", "reranked": False, "errorType": type(exc).__name__, "notice": "Keyword retrieval is available. Enable free local hybrid search with bash demo/local/enable-rag.sh."})
+                if re.fullmatch(r"/v1/rag/jobs/[a-f0-9-]{36}", path):
+                    return self.send_json(200, rag_request("/v1/jobs/" + path.split("/")[-1]))
                 if path == "/v1/demo-session":
                     return self.send_json(200, {"session": store.demo_session(), "historyPreserved": True})
                 if path == "/v1/cluster":
@@ -228,6 +235,10 @@ def create_server(store, config, kube):
                 if not self.authorized():
                     return self.send_json(401, {"error": "unauthorized"})
                 body = self.body()
+                if path == "/v1/rag/benchmark":
+                    if body != {}:
+                        raise ValueError("Only the bundled synthetic regression set can be benchmarked")
+                    return self.send_json(202, rag_request("/v1/benchmark", body={}))
                 if path == "/v1/evaluations":
                     if not isinstance(body, dict) or set(body) - {"runId", "profile", "expectedFacts", "expectedResponse"}:
                         raise ValueError("Only a completed run, profile, and independent references may be evaluated")

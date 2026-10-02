@@ -5,9 +5,10 @@ import copy
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
-VERSION = "2026-10-02.1"
+VERSION = "2026-10-02.2"
 DOCS = "https://kubernetes.io/docs/"
 SOURCES = {
     "workload": DOCS + "tasks/debug/debug-application/debug-running-pod/",
@@ -90,7 +91,10 @@ def catalog() -> list[dict]:
                 "verification": verification, "restorableFields": fields,
                 "executionMode": "reviewed_profile_required" if fields else "operator_led",
                 "source": SOURCES[category], "version": VERSION,
-                "risk": "elevated" if group == "difficult" else "context_dependent"})
+                "risk": "elevated" if group == "difficult" else "context_dependent", "collection": "kubernetes"})
+    if os.getenv("KRAVEL_SYNTHETIC_RUNBOOKS", "") == "1":
+        from .support_knowledge import support_runbooks
+        result.extend(support_runbooks())
     path = os.getenv("KRAVEL_RUNBOOKS_PATH", "")
     if path:
         from .guardrails import guard_model_input
@@ -104,13 +108,15 @@ def catalog() -> list[dict]:
         keys = {"id", "title", "category", "signals", "evidenceRequired", "remediation", "verification", "source"}
         ids = {case["id"] for case in result}
         for case in extra:
-            if not isinstance(case, dict) or set(case) != keys or not all(isinstance(v, str) and 1 <= len(v) <= 3000 for v in case.values()) or case["id"] in ids:
+            if not isinstance(case, dict) or set(case) - {"collection"} != keys or not all(isinstance(v, str) and 1 <= len(v) <= 3000 for v in case.values()) or case["id"] in ids:
                 raise ValueError("Invalid or duplicate custom runbook")
+            if not re.fullmatch(r"[a-z0-9_-]{1,60}", case.get("collection", "team")):
+                raise ValueError("Invalid runbook collection")
             validate_url(case["source"])
             if guard_model_input(json.dumps(case), "custom runbook", 24_000)["findings"]:
                 raise ValueError("Custom runbook contains sensitive or instruction-like material")
             ids.add(case["id"])
-            result.append({**case, "group": "custom", "version": hashlib.sha256(json.dumps(case, sort_keys=True).encode()).hexdigest()[:16], "restorableFields": [], "executionMode": "operator_led", "risk": "operator_review_required"})
+            result.append({**case, "collection": case.get("collection", "team"), "group": "custom", "version": hashlib.sha256(json.dumps(case, sort_keys=True).encode()).hexdigest()[:16], "restorableFields": [], "executionMode": "operator_led", "risk": "operator_review_required"})
     return copy.deepcopy(result)
 
 
