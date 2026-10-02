@@ -89,6 +89,10 @@ class AuditStore:
                 CREATE TABLE IF NOT EXISTS presentation_state (
                   key TEXT PRIMARY KEY, value_json TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS cluster_plans (
+                  run_id TEXT NOT NULL, plan_id TEXT NOT NULL, plan_json TEXT NOT NULL,
+                  PRIMARY KEY(run_id, plan_id)
+                );
                 """
             )
             columns = {row[1] for row in self.connection.execute("PRAGMA table_info(investigations)").fetchall()}
@@ -99,6 +103,15 @@ class AuditStore:
     def close(self):
         with self.lock:
             self.connection.close()
+
+    def save_cluster_plan(self, run_id, draft):
+        with self.lock, self.connection:
+            self.connection.execute("INSERT OR IGNORE INTO cluster_plans VALUES (?, ?, ?)", (run_id, draft["id"], stable_json(draft)))
+
+    def cluster_plan(self, run_id, plan_id):
+        with self.lock:
+            row = self.connection.execute("SELECT plan_json FROM cluster_plans WHERE run_id=? AND plan_id=?", (run_id, plan_id)).fetchone()
+        return json.loads(row[0]) if row else None
 
     def demo_session(self):
         """A persisted display boundary, not deletion of audit or trace history."""

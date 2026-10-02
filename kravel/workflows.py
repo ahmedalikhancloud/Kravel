@@ -106,19 +106,22 @@ class WorkflowManager:
                 self.stop.wait(5)
         threading.Thread(target=observe, daemon=True, name="read-only-recovery-observer").start()
 
-    def start(self, question, namespace, target=""):
-        if namespace != self.config.default_namespace or len(question) > 8000:
+    def start(self, question, namespace, target="", model_route=""):
+        from .cluster_plans import operator_enabled
+        import re
+        if (namespace != self.config.default_namespace and not operator_enabled(self.config)) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", namespace) or len(question) > 8000:
             raise ValueError("Investigation must use the configured namespace and a bounded question")
+        if model_route not in {"", "fast", "auto", "thinking"}: raise ValueError("Unknown local model route")
         if not self.model_slot.acquire(blocking=False):
             raise RuntimeError("Karl is already investigating. Follow the active run, then try again.")
         run_id = str(uuid.uuid4())
         self.store.start_workflow(run_id, "investigation", namespace, target)
-        threading.Thread(target=self._investigate, args=(run_id, question, namespace, target), daemon=True).start()
+        threading.Thread(target=self._investigate, args=(run_id, question, namespace, target, model_route), daemon=True).start()
         return self.store.workflow(run_id)
 
-    def _investigate(self, run_id, question, namespace, target):
+    def _investigate(self, run_id, question, namespace, target, model_route=""):
         try:
-            result = run_debugger(self.kube, self.store, self.config, question, namespace, run_id=run_id, progress=Progress(self.store, run_id), target=target)
+            result = run_debugger(self.kube, self.store, self.config, question, namespace, run_id=run_id, progress=Progress(self.store, run_id), target=target, **({"model_route": model_route} if model_route else {}))
             # Raw guarded operator prompt is never part of public history.
             result.get("guardrails", {}).get("input", {}).pop("value", None)
             self.store.update_workflow(run_id, status="completed", payload=public_evidence(result))
@@ -134,6 +137,11 @@ class WorkflowManager:
 
     def observe_proposals(self, proposals):
         for proposal in proposals:
+            if proposal["fix_id"].startswith("plan-"):
+                # A general plan may delete resources or deliberately stop work.
+                # Never use a demo-specific 'recovery' heuristic for it.
+                proposal["verification"] = None
+                continue
             run_id = "verify:" + proposal["id"]
             with self.lock:
                 if proposal["status"] == "executed" and not self.store.workflow(run_id):

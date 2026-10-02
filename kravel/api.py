@@ -34,6 +34,7 @@ WEB_ASSETS = {
     "/ui/demo.mjs": ("demo.mjs", "text/javascript; charset=utf-8"),
     "/ui/observability.mjs": ("observability.mjs", "text/javascript; charset=utf-8"),
     "/ui/runbooks.mjs": ("runbooks.mjs", "text/javascript; charset=utf-8"),
+    "/ui/plans.mjs": ("plans.mjs", "text/javascript; charset=utf-8"),
     "/ui/vendor/three.module.min.js": ("vendor/three.module.min.js", "text/javascript; charset=utf-8"),
     "/ui/vendor/three.core.min.js": ("vendor/three.core.min.js", "text/javascript; charset=utf-8"),
     "/ui/vendor/OrbitControls.js": ("vendor/OrbitControls.js", "text/javascript; charset=utf-8"),
@@ -49,7 +50,7 @@ def _broker_request(config, path: str, method: str = "GET", body=None):
     headers = {"Accept": "application/json", "User-Agent": "kravel/0.3.0"}
     if data is not None:
         headers["Content-Type"] = "application/json"
-    with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers, method=method), timeout=20) as response:
+    with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers, method=method), timeout=120 if body and "plan" in body else 20) as response:
         return json.load(response)
 
 
@@ -145,6 +146,14 @@ def create_server(store, config, kube):
                         raise ValueError("Invalid evaluation job ID")
                     return self.send_json(200, _evaluation_request(config, "/v1/jobs/" + job_id))
                 namespace = query.get("namespace", config.default_namespace)
+                if path == "/v1/namespaces":
+                    return self.send_json(200, {"namespaces": [o.get("metadata", {}).get("name") for o in kube.list_resources("namespaces", "", limit=200)["items"]]})
+                if path.startswith("/v1/cluster-plans/"):
+                    run_id, plan_id = path.split("/")[3:5]
+                    run = store.workflow(run_id)
+                    permitted = run and run["status"] == "completed" and run["payload"].get("disposition") != "blocked" and any(p["id"] == plan_id for p in run["payload"].get("clusterPlans", []))
+                    draft = store.cluster_plan(run_id, plan_id) if permitted else None
+                    return self.send_json(200 if draft else 404, draft or {"error": "not_found"})
                 if path == "/v1/runbooks":
                     cases = scenario_catalog()
                     return self.send_json(200, {"scenarios": cases, "version": SCENARIO_VERSION,
@@ -193,6 +202,9 @@ def create_server(store, config, kube):
                             unavailable.append("operator audit")
                     return self.send_json(200, {"entries": sorted(entries, key=lambda item: item.get("at", ""), reverse=True)[:300], "unavailable": unavailable})
                 if path == "/v1/capabilities":
+                    from .cluster_plans import operator_enabled
+                    if operator_enabled(config):
+                        return self.send_json(200, {"agent": {"mode": "general-cluster-operator", "directKubernetesWrites": False, "writesVia": "approval-broker", "tools": ["kubectl_read", "draft_cluster_plan", "request_repair_approval"]}, "broker": {"namespace": "any", "resources": "Any Kubernetes API resource, including CRDs, RBAC, storage and nodes", "executionIdentity": "cluster-admin", "requiresHumanApproval": True, "approvalTimeoutSeconds": config.approval_timeout_seconds, "dryRun": "server where supported; unavailable or deferred checks require explicit acknowledgment", "hostShell": False, "interactiveSessions": False}, "models": {"fast": config.llm_model, "thinking": getattr(config, "llm_thinking_model", ""), "routing": getattr(config, "llm_routing", "fast")}})
                     enrolled = load_profiles()
                     return self.send_json(200, {
                         "agent": {"mode": "approval-gated-repair", "allowed": ["get", "list", "watch", "pods/log", "draft_repair", "request_repair_approval"], "writesVia": "approval-broker", "directKubernetesWrites": False, "denied": ["secrets", "pods/exec", "create", "update", "delete", "approve", "rbac"]},
@@ -241,7 +253,9 @@ def create_server(store, config, kube):
                     if not question:
                         raise ValueError("message is required")
                     try:
-                        return self.send_json(202, workflows.start(question, namespace, str(body.get("target") or "")[:250]))
+                        args = [question, namespace, str(body.get("target") or "")[:250]]
+                        if body.get("modelRoute"): args.append(str(body["modelRoute"]))
+                        return self.send_json(202, workflows.start(*args))
                     except RuntimeError as exc:
                         return self.send_json(409, {"error": str(exc)})
                 if path == "/v1/chat":
@@ -258,6 +272,13 @@ def create_server(store, config, kube):
                     name = str(body.get("tool") or "")
                     return self.send_json(200, self.read_tool(name, body.get("arguments") or {}, namespace))
                 if path == "/v1/proposals":
+                    if "planId" in body:
+                        run = store.workflow(str(body.get("runId", "")))
+                        if not run or run["kind"] != "investigation" or run["status"] != "completed" or run["payload"].get("disposition") == "blocked" or not any(p["id"] == body["planId"] for p in run["payload"].get("clusterPlans", [])):
+                            raise ValueError("Choose a completed, permitted investigation with this exact staged plan")
+                        draft = store.cluster_plan(run["id"], body["planId"])
+                        if not draft: raise ValueError("Exact plan was not recorded by this investigation")
+                        return self.send_json(201, _broker_request(config, "/v1/proposals", "POST", {"plan": draft["plan"], "namespace": run["namespace"], "actor": "human-requested-cluster-plan"}))
                     if "draftId" in body:
                         run = store.workflow(str(body.get("runId", "")))
                         if not run or run["kind"] != "investigation" or run["status"] != "completed" or run["payload"].get("disposition") == "blocked":

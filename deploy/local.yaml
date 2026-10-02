@@ -92,6 +92,19 @@ subjects:
     name: kravel-approval-broker
     namespace: kravel-system
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kravel-approved-cluster-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: kravel-approval-broker
+    namespace: kravel-system
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -152,13 +165,16 @@ spec:
             - {name: KRAVEL_DEFAULT_NAMESPACE, value: "kravel-demo"}
             - {name: KRAVEL_REPAIR_PROFILES_PATH, value: "/repair-policy/profiles.json"}
             - {name: KRAVEL_REPAIR_MODE, value: "approval_gated"}
+            - {name: KRAVEL_CLUSTER_OPERATOR_MODE, value: "cluster"}
             - {name: KRAVEL_BROKER_URL, value: "http://kravel-approval-broker.kravel-system.svc.cluster.local:8090"}
             - {name: KRAVEL_OPERATOR_URL, value: "http://kravel-operator.kravel-system.svc.cluster.local:8082"}
             - {name: KRAVEL_LLM_BASE_URL, value: "http://host.docker.internal:12434/engines/v1"}
             - {name: KRAVEL_LLM_MODEL, value: "ai/qwen3:4b-instruct-2507-q4_K_M"}
+            - {name: KRAVEL_LLM_THINKING_MODEL, value: "ai/qwen3:4b-thinking-2507-q4_K_M"}
+            - {name: KRAVEL_LLM_ROUTING, value: "auto"}
             - {name: KRAVEL_LLM_MAX_TURNS, value: "4"}
             - {name: KRAVEL_LLM_REASONING_BUDGET, value: "0"}
-            - {name: KRAVEL_LLM_TIMEOUT_SECONDS, value: "90"}
+            - {name: KRAVEL_LLM_TIMEOUT_SECONDS, value: "180"}
             - {name: KRAVEL_MLFLOW_URL, value: "http://kravel-mlflow.kravel-observability.svc.cluster.local:5000"}
             - {name: KRAVEL_MLFLOW_EXPERIMENT, value: "Kravel Guarded Debugger"}
             - {name: KRAVEL_MLFLOW_CONTENT_MODE, value: "redacted"}
@@ -234,11 +250,14 @@ spec:
           env:
             - {name: KRAVEL_HOST, value: "0.0.0.0"}
             - {name: KRAVEL_PORT, value: "8090"}
+            - {name: KRAVEL_MLFLOW_CONTENT_MODE, value: "redacted"}
+            - {name: KRAVEL_MLFLOW_TRACE_DETAIL, value: "deep"}
             - {name: KRAVEL_DB_PATH, value: "/data/approvals.db"}
             - {name: KRAVEL_DEFAULT_NAMESPACE, value: "kravel-demo"}
             - {name: KRAVEL_APPROVAL_TIMEOUT_SECONDS, value: "300"}
             - {name: KRAVEL_REPAIR_PROFILES_PATH, value: "/repair-policy/profiles.json"}
             - {name: KRAVEL_REPAIR_MODE, value: "approval_gated"}
+            - {name: KRAVEL_CLUSTER_OPERATOR_MODE, value: "cluster"}
             - name: KRAVEL_APPROVAL_TOKEN
               valueFrom:
                 secretKeyRef: {name: kravel-approval-token, key: token}

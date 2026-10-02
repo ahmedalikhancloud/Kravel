@@ -16,6 +16,9 @@ docker model status || die "Enable Docker Desktop Model Runner, GPU inference, a
 section "Downloading the local Qwen debugger profile: $QWEN_MODEL"
 retry docker model pull "$QWEN_MODEL"
 docker model configure --context-size "$QWEN_CONTEXT" "$QWEN_MODEL"
+section "Downloading the optional local thinking planner"
+retry docker model pull "${KRAVEL_THINKING_MODEL:-ai/qwen3:4b-thinking-2507-q4_K_M}"
+docker model configure --context-size "$QWEN_CONTEXT" "${KRAVEL_THINKING_MODEL:-ai/qwen3:4b-thinking-2507-q4_K_M}" -- --reasoning-budget "${KRAVEL_THINKING_BUDGET:-1024}"
 docker model run --detach "$QWEN_MODEL"
 
 section "Building the Kravel debugger"

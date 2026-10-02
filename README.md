@@ -2,22 +2,23 @@
 
 Karl now has a searchable **50-case production field guide**, local runbook RAG,
 bounded public documentation lookup and evidence-linked **novel repair drafts**.
-Karl is now **repair-capable**, with namespace-scoped write permissions held by
-its execution service. Existing Deployments, DaemonSets, ConfigMaps and Services in
-`kravel-demo` can be patched after server dry-run and separate Slack/Local Slack
-human approval; no per-resource enrollment is needed by default. Hard node,
-control-plane and data recovery cases remain operator-led. See [repair coverage](docs/repair-coverage.md).
+Karl is now a **general, human-approved Kubernetes operator**: arbitrary resource
+kinds/namespaces, generated YAML/application code, ordered kubectl commands,
+RBAC/CRDs/storage and bounded container/node operations. The local executor has
+cluster-admin; the investigation worker still cannot mutate or approve directly.
+Every exact plan requires separate Slack/Local Slack human approval within five
+minutes. See [the operator demo and security boundaries](docs/cluster-operator.md).
 
-Kravel is a local, guarded Kubernetes debugging and repair agent built for a live demo. Karl—the pixel-art copilot—investigates with read tools, drafts evidence-based repairs, and can request approval itself when you ask for a fix. Its separate execution ServiceAccount holds get/patch permissions for supported resources in `kravel-demo`, including resources you create manually. Only a passing Kubernetes server dry-run and an independent human approval within five minutes permit execution. Actual stages stay visible, followed by independent read-only recovery verification.
+Kravel is a local, guarded Kubernetes operator built for a live demo. Karl—the pixel-art copilot—investigates with read tools and turns complex requests into reviewable files and commands. A separate cluster-admin execution service runs them only after independent human approval. Server dry-run runs where supported; unavailable/deferred checks are explicitly flagged. Actual steps and explicit verification outputs stay visible. This is a powerful disposable-cluster demo, not production-hardened least privilege.
 
 The main browser UI renders the live namespace as a navigable WebGL 3D observatory. Orbit, pan, scroll to zoom, and click a Pod, Deployment, ReplicaSet, ConfigMap, or Service to inspect its sanitized manifest, Events, describe output, and connected Pod logs. Directional links use actual controller owner references, ConfigMap references, and Service selectors; they do not claim measured network traffic. All graphics libraries are bundled locally—no CDN, external fonts, or new credentials.
 
 ## What is included
 
-- LangGraph + local Qwen debugging agent with no mutation, shell, exec, proxy, or Secret tools.
+- LangGraph + locally routed Qwen instruct/thinking investigator/planner roles; fast input/evidence/output guards, no hosted router or database.
 - Read-only Kubernetes tools shaped like `get`, `describe`, `events`, and `logs`.
 - Evidence-first LangGraph investigations with evidence IDs, uncertainty, prevention, actual progress, and local run history.
-- A separate get/patch execution identity for existing Deployments, DaemonSets, ConfigMaps and Services in `kravel-demo`; structured field restrictions and mandatory human approval, not unrestricted cluster-admin.
+- A separate cluster-admin executor for exact generated file/command plans, mandatory independent approval, immutable plan hashes, at-most-once ordered execution and no unreviewed rollback. No host shell, kubeconfig overrides or interactive TTY sessions.
 - A beginner-friendly practice guide, on-demand resource inspector, and checkmarked repair checklist driven by actual workflow steps.
 - Free local NVIDIA NeMo Guardrails: professional-language/injection preflight, semantic input/evidence/output checks, strict classifier schemas, fail-closed enforcement, and per-check MLflow timing. These reduce risk; they do not certify enterprise security or replace RBAC.
 - Human-only scenario buttons on a separate authenticated localhost controller: fixed lab catalog, server dry-run, 60-second one-use confirmation, stale-state checks, and healthy reset. Karl has no button/tool credential.

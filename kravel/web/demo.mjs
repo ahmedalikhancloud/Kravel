@@ -34,6 +34,7 @@ export function repairTimeline(proposal) {
   const verification = new Map((proposal.verification?.steps || []).map((s) => [s.step_key, s]));
   const stopped = ['failed', 'expired', 'rejected'].includes(proposal.status);
   const stage = (key, label, source = steps) => ({step_key: key, label, status: source.get(key)?.status || (stopped ? 'skipped' : 'queued'), duration_ms: source.get(key)?.duration_ms || 0, details: source.get(key)?.details || {}});
+  if (proposal.fix_id?.startsWith('plan-')) return [stage('dry_run', 'Review server validation & any limitations'), stage('approval', 'Wait for your exact-plan approval'), stage('revalidate', 'Check immutable reviewed code & commands'), ...(proposal.dryRun || []).map((r, i) => stage(`apply_${i+1}`, r.label || `Execute reviewed step ${i+1}`))];
   const plan = [stage('dry_run', 'Preview the change safely'), stage('approval', 'Wait for your approval'), stage('revalidate', 'Check that the reviewed objects have not changed')];
   for (let index = 0; index < (proposal.dryRun || []).length; index++) {
     const resource = proposal.dryRun[index].resource || `operation ${index + 1}`;

@@ -14,13 +14,16 @@ check_active_work() {
 }
 section "Checking active work before upgrading the debugger"
 check_active_work
+section "Configuring the installed thinking planner with a bounded reasoning budget"
+qwen_profile
+docker model configure --context-size "$QWEN_CONTEXT" "${KRAVEL_THINKING_MODEL:-ai/qwen3:4b-thinking-2507-q4_K_M}" -- --reasoning-budget "${KRAVEL_THINKING_BUDGET:-1024}"
 section "Building the extended guarded debugger (no new model downloads)"
 docker build --tag kravel:local "$KRAVEL_ROOT"
-section "Updating Kravel runtime and namespace-scoped approval-gated repair permissions"
+section "Updating Kravel and the human-approved cluster-admin executor (worker remains read-only)"
 check_active_work
 kubectl apply -f "$KRAVEL_ROOT/deploy/local.yaml"
 kubectl -n kravel-system rollout restart deployment/kravel deployment/kravel-approval-broker
 rollout kravel-system kravel 4m
 rollout kravel-system kravel-approval-broker 4m
-printf '\nUpgrade complete. Existing repair enrollments are preserved.\n'
+printf '\nUpgrade complete. General cluster operations now require exact-plan human approval. Existing credentials, labs and history were preserved.\n'
 printf 'Reconnect without resetting your labs: bash demo/local/demo.sh --connect-only\n'

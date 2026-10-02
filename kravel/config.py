@@ -58,12 +58,19 @@ class Config:
     mlflow_content_mode: str = "metadata"
     mlflow_trace_detail: str = "standard"
     evaluator_url: str = ""
+    cluster_operator_mode: str = "disabled"
+    llm_thinking_model: str = ""
+    llm_routing: str = "fast"
     kube: KubeConfig = field(default_factory=KubeConfig)
 
 
 def load_config() -> Config:
     from .drafts import repair_mode
     repair_mode()  # Invalid authorization configuration must fail at startup.
+    from .cluster_plans import operator_enabled
+    operator_enabled()
+    if os.getenv("KRAVEL_LLM_ROUTING", "fast") not in {"fast", "auto", "thinking"}:
+        raise ValueError("KRAVEL_LLM_ROUTING must be fast, auto or thinking")
     return Config(
         host=os.getenv("KRAVEL_HOST", "127.0.0.1"),
         port=_integer("KRAVEL_PORT", 8080),
@@ -90,6 +97,9 @@ def load_config() -> Config:
         mlflow_content_mode=_trace_content_mode(),
         mlflow_trace_detail=os.getenv("KRAVEL_MLFLOW_TRACE_DETAIL", "standard"),
         evaluator_url=os.getenv("KRAVEL_EVALUATOR_URL", ""),
+        cluster_operator_mode=os.getenv("KRAVEL_CLUSTER_OPERATOR_MODE", "disabled"),
+        llm_thinking_model=os.getenv("KRAVEL_LLM_THINKING_MODEL", ""),
+        llm_routing=os.getenv("KRAVEL_LLM_ROUTING", "fast"),
         kube=KubeConfig(
             host=os.getenv("KUBERNETES_SERVICE_HOST", ""),
             port=_integer("KUBERNETES_SERVICE_PORT_HTTPS", 443),

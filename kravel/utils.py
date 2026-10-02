@@ -46,6 +46,9 @@ def sanitize_object(value: dict) -> dict:
     if isinstance(metadata, dict):
         metadata.pop("managedFields", None)
         metadata.pop("selfLink", None)
+        annotations = metadata.get("annotations")
+        if isinstance(annotations, dict):
+            annotations.pop("kubectl.kubernetes.io/last-applied-configuration", None)
     if obj.get("kind") == "Secret":
         for field in ("data", "stringData"):
             if isinstance(obj.get(field), dict):

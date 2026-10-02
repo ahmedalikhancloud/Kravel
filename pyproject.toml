@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "kravel"
 version = "0.3.0"
-description = "Read-only LangGraph Kubernetes debugger with human-approved remediation"
+description = "LangGraph Kubernetes operator with independent human-approved execution"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
   "mlflow-tracing==3.16.0",
   "openai==3.22.1",
   "nemoguardrails==0.24.1",
+  "PyYAML==6.0.3",
 ]
 
 [project.optional-dependencies]

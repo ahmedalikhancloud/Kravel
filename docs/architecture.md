@@ -33,20 +33,22 @@ Generic object-learning questions without a selected resource take a separate La
 ## Approval broker
 
 The execution service runs in a different Pod with the `kravel-approval-broker`
-ServiceAccount and a separate SQLite database. Its Role grants `get` and `patch`
-on existing Deployments, DaemonSets, ConfigMaps and Services in `kravel-demo`,
-including manually created resources. It grants no create/update/delete, Secret,
-RBAC, exec, node or other-namespace write access. Default `approval_gated` mode
-does not need per-object enrollment. Optional `enrolled_only` applies the older
-named-field policy; operators must narrow RBAC separately for that deployment.
+ServiceAccount and a separate SQLite database. The local general-operator
+installation now binds this identity to **cluster-admin**; it is no longer
+namespace-scoped least privilege. The worker stays read-only, without approval
+credentials. General plans support arbitrary discovered API kinds, generated
+files and ordered built-in kubectl commands, including cross-namespace changes,
+RBAC, CRDs, storage and bounded exec/node operations. See
+[the operator design and limitations](cluster-operator.md).
 
-The broker accepts a catalog `fixId` or a strictly validated structured draft,
-never an arbitrary command. `request_repair_approval` stages a review selection
+The broker accepts a catalog `fixId`, a strictly validated structured draft, or
+a canonical general file/argv plan. It never launches a host shell or plugin.
+`request_repair_approval` stages a review selection
 only if the operator requested repair and it belongs to live findings/drafts in
-this investigation. Submission is deferred until output guards pass cleanly.
+this investigation, or a general plan staged by that investigation. Submission is deferred until output guards pass cleanly.
 The UI can also forward a draft from a saved, permitted, completed investigation.
 
-Every proposal resolves to exact structured API operations, validates existing
+Legacy catalog/draft proposals resolve to exact structured API operations, validate existing
 container identity and calls Kubernetes with `dryRun=All` before requesting human
 approval. The command is generated from the patch, not model prose. A human
 approval within 300 seconds moves the proposal to `approved`; only then can the
@@ -54,6 +56,15 @@ worker apply the reviewed operations. It revalidates current policy, plan hash,
 UID and specification, with resourceVersion preconditions. Denial, timeout,
 staleness, policy revocation and interrupted execution never trigger automatic
 replay. No agent tool can approve a proposal.
+
+General plans hash all exact files, argv arrays and step labels; the broker uses
+server dry-run where kubectl supports it. Missing/deferred validation requires
+human acknowledgment. Capturable named/declarative targets are fingerprinted
+before review and rechecked before the first write; other operations are
+command-level approvals, not transactions. Approved steps run once in order,
+stop on failure, and record real progress/check outputs. General plans do not
+use the demo-specific recovery observer. Local Fast/Auto/Thinking routing is a
+deterministic LangGraph stage recorded in MLflow; classifiers remain on fast Qwen.
 
 The local approval credential exists only in the broker Pod and the localhost URL printed by the demo launcher. It is not mounted into the debugger Pod. Real Slack is an optional outbound adapter that posts the command and polls human emoji reactions.
 

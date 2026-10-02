@@ -36,6 +36,22 @@ class SlackApprovalClient:
         return self._bot_user_id
 
     def post(self, proposal: dict) -> dict:
+        if proposal["fix_id"].startswith("plan-"):
+            # Slack's text limits must never silently hide part of approved code.
+            root = self._call("chat.postMessage", {"channel": self.channel_id, "text": f"Preparing complete review {proposal['id'][:8]}. DO NOT APPROVE until this message says READY.", "unfurl_links": False, "unfurl_media": False})
+            draft = proposal["dryRun"][0]["reviewedPlan"]
+            sections = [("Exact ordered commands", proposal["command"])]
+            sections += [(f"Generated file: {name}", source) for name, source in draft["plan"]["files"].items()]
+            sections += [("Validation results & limitations", json.dumps([{k: v for k, v in r.items() if k != "reviewedPlan"} for r in proposal["dryRun"]], indent=2))]
+            for title, source in sections:
+                for offset in range(0, len(source), 2800):
+                    self._call("chat.postMessage", {"channel": root["channel"], "thread_ts": root["ts"], "text": f"{title} · part {offset//2800+1}\n" + source[offset:offset+2800], "unfurl_links": False, "unfurl_media": False})
+            limited = any(r["validation"] in {"deferred", "not_available"} for r in proposal["dryRun"])
+            # A distinct message created AFTER all review chunks prevents an
+            # early reaction on the placeholder from becoming valid approval.
+            ready = self._call("chat.postMessage", {"channel": root["channel"], "thread_ts": root["ts"], "text": f"READY for human approval · {draft['plan']['title']}\nPlan hash: {draft['planHash']}\nRead ALL commands, generated files and validation results in this thread. Cluster-admin execution: namespaces, RBAC, storage and node changes can damage the cluster.\n" + ("WARNING: Some commands lack a passed server dry-run. 👍 explicitly accepts the listed limitations.\n" if limited else "Server dry-runs passed for supported mutations.\n") + f"React on THIS READY message with 👍 to approve this exact plan, or ✕ to reject. Deadline: {proposal['expires_at']}. No automatic follow-up changes.", "unfurl_links": False, "unfurl_media": False})
+            self.update(root["channel"], root["ts"], f"Review complete · {draft['plan']['title']} · {proposal['id'][:8]}. Open this thread, inspect all code/commands/validation, then react only on its final READY message. Reactions on this summary do not approve anything.")
+            return {"channel": ready["channel"], "ts": ready["ts"]}
         text = (
             f"Kravel approval requested ({proposal['id'][:8]})\n"
             f"Fix: {proposal['fix_id']} · {proposal['resource']}\n"

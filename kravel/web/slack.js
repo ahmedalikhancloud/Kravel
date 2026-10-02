@@ -26,7 +26,7 @@ async function decide(proposal, action, event) {
   const button = event.currentTarget;
   button.disabled = true;
   try {
-    await api(`/v1/proposals/${proposal.id}/${action}`, {method:"POST", headers:{"X-Kravel-Approval-Token":token}, body:JSON.stringify({actor:"local-slack-human"})});
+    await api(`/v1/proposals/${proposal.id}/${action}`, {method:"POST", headers:{"X-Kravel-Approval-Token":token}, body:JSON.stringify({actor:"local-slack-human", acceptUnvalidated: Boolean(button.closest("article").querySelector("input[data-risk-ack]")?.checked)})});
     await load();
   } catch (error) {
     button.disabled = false;
@@ -36,6 +36,7 @@ async function decide(proposal, action, event) {
 
 function render(proposals) {
   const openDetails = new Set([...messages.querySelectorAll("details[open]")].map((details) => details.dataset.id));
+  const acknowledged = new Set([...messages.querySelectorAll("input[data-risk-ack]:checked")].map((box) => box.dataset.riskAck));
   if (!proposals.length) {
     messages.replaceChildren(node("div", "empty", "No change requests yet. Ask Karl to prepare a fix from the Kravel debugger."));
     return;
@@ -46,16 +47,18 @@ function render(proposals) {
     const image = node("img"); image.src = "/ui/karl-debugger.png"; image.alt = "Karl"; avatar.append(image);
     const content = node("div");
     const meta = node("div", "meta"); meta.append(node("b", "", "Karl  APP"), node("time", "", time(proposal.created_at)));
-    content.append(meta, node("h2", "", `Approval requested · ${proposal.fix_id}`), node("p", "", `${proposal.resource} in ${proposal.namespace}`), node("div", "command", proposal.command), node("span", "dryrun", "Kubernetes server dry-run passed"));
+    const general = proposal.fix_id.startsWith("plan-"), limited = general && proposal.dryRun.some((r) => ["not_available", "deferred"].includes(r.validation));
+    content.append(meta, node("h2", "", `Approval requested · ${proposal.fix_id}`), node("p", "", `${proposal.resource} · selected namespace ${proposal.namespace}${general ? " · commands may target other namespaces or the whole cluster" : ""}`), node("div", "command", proposal.command), node("span", "dryrun", limited ? "WARNING · some steps lack a passed server dry-run" : general ? "Review exact validation results below" : "Kubernetes server dry-run passed"));
     const details = node("details", "dryrun-details");
     details.dataset.id = proposal.id;
     details.open = openDetails.has(proposal.id);
-    details.append(node("summary", "", "Inspect server dry-run output"), node("pre", "", JSON.stringify(proposal.dryRun, null, 2)));
+    details.append(node("summary", "", "Inspect generated files, exact plan & validation outputs"), node("pre", "", JSON.stringify(proposal.dryRun, null, 2)));
     content.append(details);
     if (proposal.result?.error) content.append(node("p", "", proposal.result.error));
     if (proposal.status === "pending") {
       const actions = node("div", "actions");
       const approve = node("button", "approve", "👍 Approve"); approve.disabled = !token; approve.addEventListener("click", (event) => decide(proposal, "approve", event));
+      if (limited) { const label = node("label", "risk-ack"), box = node("input"); box.type = "checkbox"; box.dataset.riskAck = proposal.id; box.checked = acknowledged.has(proposal.id); approve.disabled = !token || !box.checked; box.addEventListener("change", () => { approve.disabled = !token || !box.checked; }); label.append(box, node("span", "", "I reviewed every command and file, and accept the listed deferred/unavailable validation risks. This executor has cluster-admin permissions.")); content.append(label); }
       const reject = node("button", "reject", "✕ Reject"); reject.disabled = !token; reject.addEventListener("click", (event) => decide(proposal, "reject", event));
       const remaining = Math.max(0, Math.ceil((Date.parse(proposal.expires_at) - Date.now()) / 1000));
       actions.append(approve, reject, node("span", "countdown", `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2,"0")} remaining`));

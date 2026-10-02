@@ -19,6 +19,8 @@ from .tracing import MlflowTracer
 from .slack import SlackApprovalClient
 from .utils import stable_json, to_iso
 from .drafts import draft_fix, resolve_proposal, repair_mode
+from .cluster_plans import KubectlExecutor, canonical_plan, require_operator
+from .config import KubeConfig
 
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
@@ -39,6 +41,7 @@ class ApprovalBroker:
         self.slack = SlackApprovalClient(config.slack_bot_token, config.slack_channel_id)
         self.threads: dict[str, threading.Thread] = {}
         self.lock = threading.RLock()
+        self.executor = KubectlExecutor(getattr(config, "kube", KubeConfig()))
         store.demo_session()
         for proposal in self.store.active_proposals():
             if proposal["status"] == "pending":
@@ -50,7 +53,7 @@ class ApprovalBroker:
                 self.store.update_workflow(proposal["id"], status="interrupted")
 
     def _tracer(self):
-        return MlflowTracer(getattr(self.config, "mlflow_url", ""), getattr(self.config, "mlflow_experiment", "Kravel Guarded Debugger"))
+        return MlflowTracer(getattr(self.config, "mlflow_url", ""), getattr(self.config, "mlflow_experiment", "Kravel Guarded Debugger"), getattr(self.config, "mlflow_content_mode", "metadata"), getattr(self.config, "mlflow_trace_detail", "standard"))
 
     def _start_waiter(self, proposal_id: str):
         thread = threading.Thread(target=self._wait, args=(proposal_id,), daemon=True, name=f"approval-{proposal_id[:8]}")
@@ -78,6 +81,9 @@ class ApprovalBroker:
         return patch
 
     def _dry_run(self, fix: dict) -> list[dict]:
+        if fix.get("clusterPlan"):
+            require_operator(self.config)
+            return self.executor.preview(fix["clusterPlan"])
         results = []
         for operation in fix["operations"]:
             obj = self.kube.get_resource(operation["kind"], operation["name"], fix["namespace"])["object"]
@@ -96,6 +102,13 @@ class ApprovalBroker:
             fix = draft_fix(draft, namespace)  # Revalidate deterministic authority at the broker.
             return self._create(fix["id"], namespace, actor, prepared_fix=fix)
 
+    def create_plan(self, plan: dict, namespace: str, actor="karl-cluster-operator"):
+        require_operator(self.config)
+        draft = canonical_plan(plan, namespace)
+        fix = {**draft, "clusterPlan": draft}
+        with self.lock:
+            return self._create(draft["id"], namespace, actor, prepared_fix=fix)
+
     def _create(self, fix_id: str, namespace: str, actor: str, prepared_fix=None) -> dict:
         repair_mode()
         for existing in self.store.active_proposals():
@@ -109,8 +122,10 @@ class ApprovalBroker:
         progress = Progress(self.store, proposal_id, tracer)
         dry_started = time.perf_counter()
         try:
-            with tracer.span("repair.review", "CHAIN", {"proposal_id": proposal_id}), progress.step("dry_run", "Kubernetes server dry-run"):
+            with tracer.span("repair.review", "CHAIN", {"proposal_id": proposal_id}) as span, progress.step("dry_run", "Validate commands · server dry-run where supported" if fix.get("clusterPlan") else "Kubernetes server dry-run"):
+                span.set_content_inputs({"resource": fix["resource"], "command": fix["command"], "generated_plan": fix.get("clusterPlan", {}).get("plan", {})})
                 dry_run = self._dry_run(fix)
+                span.set_content_outputs({"validation_results": [{k: v for k, v in row.items() if k != "reviewedPlan"} for row in dry_run], "mutation_persisted": False})
         except Exception:
             self.store.update_workflow(proposal_id, status="failed")
             raise
@@ -126,7 +141,8 @@ class ApprovalBroker:
             dry_run=dry_run,
             expires_at=to_iso(datetime.now(timezone.utc) + timedelta(seconds=self.config.approval_timeout_seconds)),
         )
-        self.store.record("approval-broker", "proposal.created", actor=actor, resource=fix["resource"], outcome="pending", duration_ms=dry_ms, details={"proposalId": proposal["id"], "fixId": fix_id, "dryRun": "passed", "timeoutSeconds": self.config.approval_timeout_seconds})
+        validation = "limitations" if fix.get("clusterPlan") and any(r["validation"] in {"deferred", "not_available"} for r in dry_run) else "read_only" if fix.get("clusterPlan") and all(r["validation"] == "read_only" for r in dry_run) else "passed"
+        self.store.record("approval-broker", "proposal.created", actor=actor, resource=fix["resource"], outcome="pending", duration_ms=dry_ms, details={"proposalId": proposal["id"], "fixId": fix_id, "dryRun": validation, "timeoutSeconds": self.config.approval_timeout_seconds})
         if self.slack.enabled:
             try:
                 message = self.slack.post(proposal)
@@ -163,7 +179,7 @@ class ApprovalBroker:
                     if decision:
                         status, actor = decision
                         if status == "approved":
-                            self.approve(proposal_id, f"slack:{actor}")
+                            self.approve(proposal_id, f"slack:{actor}", accept_unvalidated=True)
                         else:
                             self.reject(proposal_id, f"slack:{actor}")
                 except Exception as exc:
@@ -178,7 +194,7 @@ class ApprovalBroker:
             self.store.record("approval-broker", "proposal.expired", actor="broker", resource=proposal["resource"], outcome="timeout", details={"proposalId": proposal["id"]})
         return updated or self.store.proposal(proposal["id"])
 
-    def approve(self, proposal_id: str, actor: str) -> dict:
+    def approve(self, proposal_id: str, actor: str, *, accept_unvalidated=False) -> dict:
         proposal = self.store.proposal(proposal_id)
         if not proposal:
             raise ValueError("Proposal not found")
@@ -187,6 +203,8 @@ class ApprovalBroker:
         expires = datetime.fromisoformat(proposal["expires_at"].replace("Z", "+00:00"))
         if datetime.now(timezone.utc) >= expires:
             return self._expire(proposal)
+        if proposal["fix_id"].startswith("plan-") and any(r.get("validation") in {"deferred", "not_available"} for r in proposal["dryRun"]) and not accept_unvalidated:
+            raise ValueError("This plan contains commands without a passed server dry-run. Explicitly acknowledge the displayed validation limitations before approving.")
         updated = self.store.transition_proposal(proposal_id, "pending", "approved", approved_at=to_iso(), approval_actor=actor)
         if updated:
             self._decision_progress(updated, "completed")
@@ -218,6 +236,24 @@ class ApprovalBroker:
         root_span = root_context.__enter__()
         try:
             repair_mode()
+            if proposal["fix_id"].startswith("plan-"):
+                require_operator(self.config)
+                reviewed = proposal["dryRun"][0].get("reviewedPlan", {})
+                draft = canonical_plan(reviewed.get("plan", {}), proposal["namespace"])
+                if draft["id"] != proposal["fix_id"] or any(r.get("planHash") != draft["planHash"] for r in proposal["dryRun"]) or len(proposal["dryRun"]) != len(draft["plan"]["steps"]):
+                    raise ValueError("Reviewed plan changed; new validation and approval are required")
+                with progress.step("revalidate", "Check immutable reviewed files & commands"):
+                    if reviewed != draft:
+                        raise ValueError("Reviewed files or commands were altered")
+                    self.executor.revalidate(draft, proposal["dryRun"])
+                self.executor.execute(draft, progress, tracer, results, proposal["approval_actor"])
+                updated = self.store.update_proposal(proposal["id"], status="executed", executed_at=to_iso(), result={"operations": results, "generalPlan": True, "verification": "Only explicit checks in this plan were run; command success is not a blanket health guarantee."})
+                self.store.update_workflow(proposal["id"], status="plan_completed", payload={"traceId": tracer.trace_id, "operations": results})
+                self.store.record("approval-broker", "cluster.plan_executed", actor=proposal["approval_actor"], resource=proposal["resource"], outcome="success", duration_ms=(time.perf_counter()-started)*1000, details={"proposalId": proposal["id"], "planHash": draft["planHash"], "steps": len(results)})
+                if self.slack.enabled and proposal.get("slack_ts"):
+                    try: self.slack.update(proposal["slack_channel"], proposal["slack_ts"], f"✅ Approved cluster plan completed. {len(results)} steps succeeded. Review explicit verification outputs in Kravel. Plan: {draft['id']}")
+                    except Exception: pass
+                return updated
             fix = resolve_proposal(proposal)
             dry_runs = proposal["dryRun"]
             if len(dry_runs) != len(fix["operations"]) or any(result.get("planHash") != self._plan_hash(fix) for result in dry_runs):
@@ -339,16 +375,21 @@ def create_broker_server(broker: ApprovalBroker, config):
                         broker.store.record("approval-broker", "demo.view_started", actor="local-human", details={"sessionId": session["id"], "historyPreserved": True})
                         return self.json(200, {"session": session, "historyPreserved": True})
                 if path == "/v1/proposals":
+                    if "plan" in body:
+                        return self.json(201, broker.create_plan(body["plan"], str(body.get("namespace") or config.default_namespace), str(body.get("actor") or "karl-cluster-operator")))
                     if "draft" in body:
                         return self.json(201, broker.create_draft(body["draft"], str(body.get("namespace") or config.default_namespace), str(body.get("actor") or "kravel-debugger")))
                     return self.json(201, broker.create(str(body.get("fixId", "")), str(body.get("namespace") or config.default_namespace), str(body.get("actor") or "kravel-debugger")))
+                if path == "/v1/cluster-read":
+                    require_operator(config)
+                    return self.json(200, broker.executor.read(body.get("argv"), str(body.get("namespace") or config.default_namespace)))
                 if path.startswith("/v1/proposals/") and path.endswith(("/approve", "/reject")):
                     if not self.local_authorized():
                         broker.store.record("approval-broker", "approval.denied", actor="unauthenticated", outcome="denied", details={"reason": "invalid_or_missing_token"})
                         return self.json(401, {"error": "approval_token_required"})
                     proposal_id, action = path.split("/")[3:5]
                     actor = str(body.get("actor") or "local-human")[:80]
-                    proposal = broker.approve(proposal_id, actor) if action == "approve" else broker.reject(proposal_id, actor)
+                    proposal = broker.approve(proposal_id, actor, accept_unvalidated=body.get("acceptUnvalidated") is True) if action == "approve" else broker.reject(proposal_id, actor)
                     return self.json(200, proposal)
                 return self.json(404, {"error": "not_found"})
             except Exception as exc:

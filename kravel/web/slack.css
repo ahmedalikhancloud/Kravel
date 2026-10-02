@@ -44,3 +44,4 @@ footer { margin:0 20px 18px; padding:12px; border:1px solid var(--line); border-
 .dryrun-details pre { max-height:260px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; background:#f5f7f8; padding:10px; border-radius:5px; }
 .actions button:not(:disabled), summary, a { cursor:url('/ui/cursor-pointer.svg') 8 3, pointer; }
 @media(max-width:700px){ body{grid-template-columns:1fr} aside{display:none}.message{padding:12px}.warning{margin:10px}.command{font-size:10px} }
+.risk-ack { display:flex; gap:10px; padding:14px; margin-top:12px; background:#fff4dc; border:1px solid #e9c36b; border-radius:8px; font-size:12px; line-height:1.6; }.risk-ack input { flex:none; width:18px; height:18px; }.command { white-space:pre-wrap; }

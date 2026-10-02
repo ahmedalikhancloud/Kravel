@@ -145,3 +145,81 @@ def test_prefetched_strong_evidence_uses_one_guarded_synthesis_call(monkeypatch)
     assert result["evidence"] and result["mutationExecuted"] is False
     assert tracer.spans["evidence.services"].outputs["result"]["items"]
     assert tracer.spans["kravel.debugger"].inputs["selected_resource"] == "Service/demo-gateway"
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+def test_general_creation_plan_routes_locally_and_submits_only_after_output_guards(monkeypatch, blocked):
+    import json
+    requests, submissions = [], []
+    tracer = FakeTracer()
+    source = "# generated configuration\n" * 350 + "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: proposed-settings\ndata:\n  GREETING: hello\n"
+    proposed = {"title": "Create proposed settings", "summary": "Create a new ConfigMap as desired state. Unknown collision state must be validated.", "files": {"settings.yaml": source}, "steps": [{"label": "Apply proposed settings", "argv": ["apply", "-f", "settings.yaml"]}]}
+    def complete(**kwargs):
+        requests.append(kwargs)
+        if len(requests) == 1:
+            assert kwargs["model"] == config.llm_model
+            assert "draft_cluster_plan" not in [t["function"]["name"] for t in kwargs["tools"]]
+            return response("The initial discovery turn is complete; hand off to the planner.")
+        if len(requests) == 2:
+            assert kwargs["model"] == "local-thinking"
+            return response(None, [call("draft_cluster_plan", json.dumps(proposed), "draft")])
+        assert kwargs["model"] == config.llm_model and kwargs["tool_choice"] == "none"
+        assert "Review submission staged" in kwargs["messages"][-1]["content"]
+        return response("Proposed: create the requested new ConfigMap. This is desired state, not an observed fault. Uncertainty: validation and collision checks await the broker. Separate human approval is required; nothing executed.")
+    monkeypatch.setattr(debugger, "OpenAI", lambda **_: SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=complete))))
+    monkeypatch.setattr(debugger, "MlflowTracer", lambda *_: tracer)
+    monkeypatch.setattr(debugger, "discover_issues", lambda *_: {"issues": [], "resources": []})
+    def submit(_config, payload):
+        submissions.append(payload)
+        return {"id": "pending-review", "status": "pending", "resource": "Create proposed settings"}
+    monkeypatch.setattr(debugger, "request_approval", submit)
+    if blocked:
+        def judge(self, *, phase, **_):
+            if phase == "input": return {"professional": True, "injection": False, "in_scope": True, "mode": "investigation"}
+            return {"injection": False} if phase == "evidence" else {"professional": True, "safe": True, "grounded": False}
+        monkeypatch.setattr(SemanticGuardrails, "_judge", judge)
+    config = load_config(); config.cluster_operator_mode = "cluster"; config.llm_thinking_model = "local-thinking"; config.llm_routing = "auto"
+    store = AuditStore()
+    result = debugger.run_debugger(object(), store, config, "Create a Kubernetes ConfigMap and generate its code for approval", "kravel-demo")
+    assert result["mutationExecuted"] is False
+    assert len(requests) == 3 and "agent.model_router" in tracer.names
+    if blocked:
+        assert submissions == [] and result["clusterPlans"] == []
+    else:
+        assert result["modelRouting"]["thinking"] is True
+        assert len(submissions) == 1 and submissions[0]["plan"]["files"]["settings.yaml"] == source
+        assert store.cluster_plan(result["runId"], result["clusterPlans"][0]["id"])["plan"]["files"]["settings.yaml"] == source
+        assert result["approvalRequests"][0]["status"] == "pending"
+
+
+def test_thinking_discovery_cannot_stage_plan_and_fast_coordinator_repairs_error(monkeypatch):
+    import json
+    requests = []
+    config = load_config(); config.cluster_operator_mode = "cluster"; config.llm_thinking_model = "think"; config.llm_routing = "thinking"
+    proposed = {"title": "Desired settings", "summary": "Create a requested ConfigMap; human review required", "files": {"settings.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: desired\ndata:\n  GREETING: hello\n"}, "steps": [{"label": "Apply", "argv": ["apply", "-f", "settings.yaml"]}]}
+    def complete(**kwargs):
+        requests.append(kwargs)
+        if len(requests) == 1:
+            # A hallucinated role-inappropriate tool must be rejected even if
+            # the model returns one not present in its offered schema.
+            return response(None, [call("draft_cluster_plan", json.dumps(proposed), "bad-role")])
+        if len(requests) == 2:
+            assert kwargs["model"] == "think"
+            bad = {**proposed, "steps": [{"label": "Apply", "argv": ["kubectl", "apply", "-f", "settings.yaml"]}]}
+            return response(None, [call("draft_cluster_plan", json.dumps(bad), "bad-argv")])
+        if len(requests) == 3:
+            assert kwargs["model"] == config.llm_model
+            assert "Unsupported kubectl verb" in kwargs["messages"][-1]["content"]
+            return response(None, [call("draft_cluster_plan", json.dumps(proposed), "good-plan")])
+        assert kwargs["tool_choice"] == "none"
+        return response("Proposed desired state: new ConfigMap. Uncertainty: validation awaits the broker. Separate human approval is required; nothing executed.")
+    monkeypatch.setattr(debugger, "OpenAI", lambda **_: SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=complete))))
+    monkeypatch.setattr(debugger, "MlflowTracer", FakeTracer)
+    monkeypatch.setattr(debugger, "discover_issues", lambda *_: {"issues": [], "resources": []})
+    submitted = []
+    monkeypatch.setattr(debugger, "request_approval", lambda cfg, payload: submitted.append(payload) or {"id": "review", "status": "pending", "resource": "desired"})
+    result = debugger.run_debugger(object(), AuditStore(), config, "Create a Kubernetes ConfigMap with GREETING=hello", "kravel-demo")
+    assert [r["model"] for r in requests] == [config.llm_model, "think", config.llm_model, config.llm_model]
+    assert len(submitted) == 1 and len(result["clusterPlans"]) == 1
+    assert "not offered" in result["tools"][0]["error"]
+    assert "Unsupported kubectl verb" in result["tools"][1]["error"]
