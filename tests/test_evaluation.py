@@ -16,6 +16,23 @@ from kravel.judge_bridge import JudgeBridge, local_model_url
 from kravel.tracing import MlflowTracer, trace_content
 
 
+def test_mlflow_security_pin_matches_all_deployed_components():
+    import tomllib
+    import yaml
+
+    root = Path(__file__).parents[1]
+    project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
+    version = next(d.split("==")[1] for d in project["optional-dependencies"]["evaluation"] if d.startswith("mlflow=="))
+    assert f"mlflow-tracing=={version}" in project["dependencies"]
+    assert f"mlflow-tracing=={version}" in (root / "Dockerfile").read_text()
+    assert f"mlflow=={version}" in (root / "Dockerfile.evaluation").read_text()
+    image = f"ghcr.io/mlflow/mlflow:v{version}"
+    manifests = list(yaml.safe_load_all((root / "deploy/observability-local.yaml").read_text()))
+    server = next(d for d in manifests if d["kind"] == "Deployment" and d["metadata"]["name"] == "kravel-mlflow")
+    assert server["spec"]["template"]["spec"]["containers"][0]["image"] == image
+    assert image in (root / "demo/local/prepare.sh").read_text()
+
+
 def test_all_public_prebuilt_scorers_are_configured_and_local():
     items = builtins("fixture-local")
     assert len(items) == 24

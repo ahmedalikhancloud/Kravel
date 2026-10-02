@@ -1,6 +1,6 @@
 # Local MLflow judges, without cloud keys
 
-Kravel uses the real **MLflow 3.14.0 `mlflow.genai.evaluate` pipeline** and its 24 public built-in scorers: 21 LLM judges and 3 deterministic checks. A separate, serial evaluator uses an explicitly configured local OpenAI-compatible model. It has **no mounted Kubernetes identity, RBAC grants, kubectl tools, approval token, or ability to fix anything**. Scores are advisory and never gate or grant repair approval.
+Kravel uses the real **MLflow 3.16.0 `mlflow.genai.evaluate` pipeline** and its 24 public built-in scorers: 21 LLM judges and 3 deterministic checks. A separate, serial evaluator uses an explicitly configured local OpenAI-compatible model. It has **no mounted Kubernetes identity, RBAC grants, kubectl tools, approval token, or ability to fix anything**. Scores are advisory and never gate or grant repair approval.
 
 ## Easiest demo
 
@@ -90,4 +90,4 @@ python -m pytest
 
 Tests exercise actual MLflow evaluation/feedback persistence and linked scorer/LLM spans, with deterministic checks and a local **fixture** HTTP model. Fixture scores verify transport/pipeline behavior only; they do not measure Qwen's quality. Tests also cover missing references/history, all public scorer configuration, local-only routing, redaction, bounded requests, and lack of execution authority.
 
-References: [MLflow built-in scorers](https://mlflow.org/docs/latest/genai/eval-monitor/scorers/llm-judge/predefined/) and [supported judge model providers](https://mlflow.org/docs/latest/genai/eval-monitor/scorers/llm-judge/custom-judges/supported-models/). The installed 3.14.0 implementation, not the changing latest catalog, defines this demo's exact behavior.
+References: [MLflow built-in scorers](https://mlflow.org/docs/latest/genai/eval-monitor/scorers/llm-judge/predefined/) and [supported judge model providers](https://mlflow.org/docs/latest/genai/eval-monitor/scorers/llm-judge/custom-judges/supported-models/). The installed 3.16.0 implementation, not the changing latest catalog, defines this demo's exact behavior.

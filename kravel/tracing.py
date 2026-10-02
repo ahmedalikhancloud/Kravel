@@ -12,10 +12,11 @@ from .utils import safe_service_url, stable_json
 def select_experiment(mlflow, name, tracking_uri):
     """Keep legacy experiments intact; remote workers need proxied artifacts."""
     remote = tracking_uri.startswith(("http://", "https://"))
-    existing = mlflow.get_experiment_by_name(name)
-    if remote and existing and not existing.artifact_location.startswith("mlflow-artifacts:"):
-        name += " (HTTP artifacts)"
+    # set_experiment is available in both mlflow-tracing and the full SDK.
+    # get_experiment_by_name is not exported by the tracing-only package.
     experiment = mlflow.set_experiment(name)
+    if remote and not experiment.artifact_location.startswith("mlflow-artifacts:"):
+        experiment = mlflow.set_experiment(name + " (HTTP artifacts)")
     if remote and not experiment.artifact_location.startswith("mlflow-artifacts:"):
         raise RuntimeError("Configure MLflow artifact serving before running cross-pod evaluation")
     return experiment

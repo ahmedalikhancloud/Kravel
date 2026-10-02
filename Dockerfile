@@ -14,7 +14,7 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir \
       'setuptools>=75' \
       langgraph==1.2.12 \
-      mlflow-tracing==3.14.0 \
+      mlflow-tracing==3.16.0 \
       openai==3.22.1 \
       nemoguardrails==0.24.1
 COPY kravel ./kravel

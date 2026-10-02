@@ -79,7 +79,7 @@ class EvaluationWorker:
         if self.activity_url and not is_internal_hostname(urlparse(self.activity_url).hostname):
             raise ValueError("Activity checks must remain local")
         self.bridge = bridge or JudgeBridge(model, model_url)
-        # Native MLflow gateway envs for pinned 3.14.0. No provider API key is needed.
+        # Native MLflow gateway envs for pinned 3.16.0. No provider API key is needed.
         os.environ["OPENAI_API_KEY"] = "not-required"
         os.environ["OPENAI_API_BASE"] = self.bridge.url
         os.environ["OPENAI_BASE_URL"] = self.bridge.url

@@ -13,11 +13,10 @@ def test_http_artifact_migration_keeps_legacy_experiment_and_uses_new_identity()
     old = SimpleNamespace(name="Kravel", experiment_id="1", artifact_location="/mlflow/artifacts/1")
     new = SimpleNamespace(name="Kravel (HTTP artifacts)", experiment_id="3", artifact_location="mlflow-artifacts:/3")
     class Experiments:
-        def get_experiment_by_name(self, name):
-            return old if name == old.name else new
+        # Model the lightweight SDK: no get_experiment_by_name export.
         def set_experiment(self, name):
             self.selected = name
-            return self.get_experiment_by_name(name)
+            return old if name == old.name else new
     sdk = Experiments()
     assert select_experiment(sdk, "Kravel", "http://localhost:5000") is new
     assert old.name == "Kravel" and old.artifact_location == "/mlflow/artifacts/1"

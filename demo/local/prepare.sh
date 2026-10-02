@@ -23,7 +23,7 @@ docker build --tag kravel:local "$KRAVEL_ROOT"
 docker build --file "$KRAVEL_ROOT/Dockerfile.evaluation" --tag kravel-evaluation:local "$KRAVEL_ROOT"
 
 section "Caching demo and observability images"
-for image in busybox:1.36 prom/prometheus:v3.13.3 grafana/grafana:13.1.6 ghcr.io/mlflow/mlflow:v3.14.0; do retry docker pull "$image"; done
+for image in busybox:1.36 prom/prometheus:v3.13.3 grafana/grafana:13.1.6 ghcr.io/mlflow/mlflow:v3.16.0; do retry docker pull "$image"; done
 
 section "Removing obsolete Laya resources"
 kubectl delete namespace kravel-ai --ignore-not-found --wait=true

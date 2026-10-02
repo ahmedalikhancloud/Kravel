@@ -12,7 +12,12 @@ Install Git for Windows. Open the Kravel folder in File Explorer and choose **Op
 bash demo/local/prepare.sh
 ```
 
-Preparation builds Kravel, downloads and warms Qwen, removes obsolete Laya resources, and starts the observability stack. The first run takes longest. Run preparation again when upgrading the code.
+Preparation builds Kravel, downloads and warms Qwen, removes obsolete Laya resources, and starts the observability stack. The first run takes longest. It checks Model Runner before making cluster changes; it cannot repair an unavailable Docker inference service. Preparation also replaces local approval/demo credentials, so use the non-resetting upgrade for an existing installation:
+
+```bash
+bash demo/local/upgrade-evaluation.sh
+bash demo/local/demo.sh --connect-only
+```
 
 ## 2. Start with a clean, healthy playground
 
