@@ -14,6 +14,10 @@ bash demo/local/demo.sh --connect-only
 
 A new install uses the usual `bash demo/local/prepare.sh`; it now includes the evaluator. Docker Desktop Kubernetes and Model Runner must be running. This needs no Groq, Codespaces, cloud account, or judge API key.
 
+The Kubernetes manifests use `host.docker.internal:12434` for local inference, so Docker Desktop's localhost TCP access on port 12434 must be enabled. This route was reachable from the Windows Kubernetes pods where the usual `model-runner.docker.internal` route was not. A 502 on the reachable route means Docker's inference backend still needs recovery; changing hostnames alone does not fix that. The model API must not be exposed to your LAN.
+
+MLflow serves evaluation artifacts over HTTP to its own PVC; the evaluator does not mount or write MLflow's filesystem. If an older experiment advertises a direct filesystem location, new requests/evaluations use **Kravel Guarded Debugger (HTTP artifacts)** instead. Old experiments, runs, and traces are preserved unchanged, not copied or deleted. UI links use each request's actual experiment ID. Ask Karl a new question after upgrading; historical requests in the old experiment are not automatically re-evaluated in the new one.
+
 1. Ask Karl a question. Wait for the answer.
 2. Under the completed investigation, expand **Evaluate Karl’s answer · local MLflow judges**.
 3. Start **Quick evaluation**: RelevanceToQuery, Safety, Guidelines, PIIDetection, RegexMatch, ResponseLength. The first three make model calls; the latter three do not. RegexMatch checks for a non-whitespace response; ResponseLength checks 1–650 words. These simple checks are not correctness/security guarantees.

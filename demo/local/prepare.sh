@@ -6,12 +6,11 @@ assert_prerequisites
 qwen_profile
 
 section "Verifying Docker Model Runner"
-if curl -fsS --max-time 5 http://127.0.0.1:12434/engines/v1/models >/dev/null 2>&1; then
-  if ! docker model context inspect kravel-desktop >/dev/null 2>&1; then
-    docker model context create kravel-desktop --host http://127.0.0.1:12434 --description "Kravel localhost-only Docker Desktop Model Runner"
-  fi
-  docker model context use kravel-desktop
+curl -fsS --max-time 5 http://127.0.0.1:12434/engines/v1/models >/dev/null 2>&1 || die "Docker Desktop's local Model Runner API is unavailable (port 12434). Enable Model Runner/TCP access or restart Docker Desktop. Do not install a second standalone runner on the same port. No cluster resources were changed."
+if ! docker model context inspect kravel-desktop >/dev/null 2>&1; then
+  docker model context create kravel-desktop --host http://127.0.0.1:12434 --description "Kravel localhost-only Docker Desktop Model Runner"
 fi
+docker model context use kravel-desktop
 docker model status || die "Enable Docker Desktop Model Runner, GPU inference, and localhost TCP port 12434, then retry."
 
 section "Downloading the local Qwen debugger profile: $QWEN_MODEL"

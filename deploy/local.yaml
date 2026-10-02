@@ -155,7 +155,7 @@ spec:
             - {name: KRAVEL_DEFAULT_NAMESPACE, value: "kravel-demo"}
             - {name: KRAVEL_BROKER_URL, value: "http://kravel-approval-broker.kravel-system.svc.cluster.local:8090"}
             - {name: KRAVEL_OPERATOR_URL, value: "http://kravel-operator.kravel-system.svc.cluster.local:8082"}
-            - {name: KRAVEL_LLM_BASE_URL, value: "http://model-runner.docker.internal/engines/v1"}
+            - {name: KRAVEL_LLM_BASE_URL, value: "http://host.docker.internal:12434/engines/v1"}
             - {name: KRAVEL_LLM_MODEL, value: "ai/qwen3:4b-instruct-2507-q4_K_M"}
             - {name: KRAVEL_LLM_MAX_TURNS, value: "4"}
             - {name: KRAVEL_LLM_REASONING_BUDGET, value: "0"}

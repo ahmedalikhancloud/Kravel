@@ -7,6 +7,9 @@ kubectl -n kravel-observability get deployment kravel-mlflow >/dev/null || die "
 section "Building debugger and isolated evaluator (no labs, tokens, or history reset)"
 docker build --tag kravel:local "$KRAVEL_ROOT"
 docker build --file "$KRAVEL_ROOT/Dockerfile.evaluation" --tag kravel-evaluation:local "$KRAVEL_ROOT"
+section "Enabling MLflow's HTTP artifact transport (PVC and historical experiments preserved)"
+kubectl apply -f "$KRAVEL_ROOT/deploy/observability-local.yaml"
+rollout kravel-observability kravel-mlflow 6m
 kubectl apply -f "$KRAVEL_ROOT/deploy/local.yaml"
 configure_kravel_model
 kubectl -n kravel-system rollout restart deployment/kravel >/dev/null

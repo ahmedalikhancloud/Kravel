@@ -9,6 +9,18 @@ from .guardrails import public_evidence, guard_model_input, _normalize, _redact
 from .utils import safe_service_url, stable_json
 
 
+def select_experiment(mlflow, name, tracking_uri):
+    """Keep legacy experiments intact; remote workers need proxied artifacts."""
+    remote = tracking_uri.startswith(("http://", "https://"))
+    existing = mlflow.get_experiment_by_name(name)
+    if remote and existing and not existing.artifact_location.startswith("mlflow-artifacts:"):
+        name += " (HTTP artifacts)"
+    experiment = mlflow.set_experiment(name)
+    if remote and not experiment.artifact_location.startswith("mlflow-artifacts:"):
+        raise RuntimeError("Configure MLflow artifact serving before running cross-pod evaluation")
+    return experiment
+
+
 def trace_content(value, max_characters=24_000, text_limit=6000, quarantine_instructions=True):
     """Bounded, best-effort redaction, including serialized tool args and env values."""
     sensitive = re.compile(r"(?i)password|passwd|token|secret|api.?key|authorization|credential")
@@ -137,6 +149,7 @@ class MlflowTracer:
         if detail not in {"standard", "deep"}:
             raise ValueError("Unknown MLflow trace detail")
         self.detail = detail
+        self.experiment_id = ""
         self.destination_experiment_id = ""
         self.text_limit, self.content_limit = (32_000, 192_000) if detail == "deep" else (6000, 24_000)
         self.url = safe_service_url(url, "MLflow") if url else ""
@@ -153,7 +166,8 @@ class MlflowTracer:
                 import mlflow
 
                 mlflow.set_tracking_uri(self.url)
-                mlflow.set_experiment(self.experiment)
+                experiment = select_experiment(mlflow, self.experiment, self.url)
+                self.experiment, self.experiment_id = experiment.name, experiment.experiment_id
                 self._mlflow = mlflow
             except Exception as exc:  # tracing must never break the debugger path
                 self.enabled = False

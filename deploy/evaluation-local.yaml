@@ -41,7 +41,7 @@ spec:
             - {name: http, containerPort: 8083}
           env:
             - {name: KRAVEL_MLFLOW_URL, value: "http://kravel-mlflow.kravel-observability.svc.cluster.local:5000"}
-            - {name: KRAVEL_JUDGE_BASE_URL, value: "http://model-runner.docker.internal/engines/v1"}
+            - {name: KRAVEL_JUDGE_BASE_URL, value: "http://host.docker.internal:12434/engines/v1"}
             - {name: KRAVEL_JUDGE_MODEL, value: "ai/qwen3:4b-instruct-2507-q4_K_M"}
             - {name: KRAVEL_DEBUGGER_URL, value: "http://kravel.kravel-system.svc.cluster.local:8080"}
             - {name: HOME, value: /tmp}

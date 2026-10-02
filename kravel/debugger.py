@@ -398,6 +398,7 @@ def run_debugger(kube, store, config, question: str, namespace: str, *, run_id=N
             "guardrails": {"input": guarded, "relevance": scope, "semantic": semantic_records, "classifierCalls": policy.calls, "output": {key: value for key, value in output.items() if key != "value"}},
             "timings": {"totalMs": total_ms, "modelMs": state["model_ms"], "toolMs": state["tool_ms"], "requestScopeMs": scope["latencyMs"], "traceSetupMs": tracer.setup_ms, "traceOverheadMs": tracer.overhead_ms, "traceFlushMs": trace_flush_ms, "inputGuardrailMs": guarded["latencyMs"], "outputGuardrailMs": output["latencyMs"]},
             "traceId": tracer.trace_id,
+            "experimentId": getattr(tracer, "experiment_id", ""),
             "reviewStatus": "general_explanation" if request_mode == "learning" else "diagnosis_only",
             "mutationExecuted": False,
             "run": run,
@@ -407,6 +408,7 @@ def run_debugger(kube, store, config, question: str, namespace: str, *, run_id=N
         total_ms = (time.perf_counter() - wall_started) * 1000
         flush_ms = tracer.flush()
         result = {"runId": run_id, "report": "I stopped before using the untrusted evidence. " + exc.policy["reason"] + " No change was executed.", "responseKind": "request_blocked", "disposition": "blocked", "diagnosticModelInvoked": activity["modelCalls"] > 0, "clusterReadsPerformed": activity["toolCalls"] > 0, "requestPolicy": exc.policy, "tools": [], "suggestedFixes": [], "guardrails": {"semantic": semantic_records, "classifierCalls": policy.calls}, "traceId": tracer.trace_id, "mutationExecuted": False, "evidence": bundle.get("evidence", []), "findings": [], "coverage": "Evidence could not pass required policy checks."}
+        result["experimentId"] = getattr(tracer, "experiment_id", "")
         result["timings"] = {"totalMs": total_ms, "modelMs": activity["modelMs"], "toolMs": activity["toolMs"], "inputGuardrailMs": guarded["latencyMs"] + scope["latencyMs"] + sum(item["latencyMs"] for item in semantic_records if item["phase"] == "evidence"), "outputGuardrailMs": 0, "traceFlushMs": flush_ms}
         store.record_investigation(id=run_id, started_at=started_at, finished_at=to_iso(), namespace=namespace, status="blocked", total_ms=total_ms, model_ms=activity["modelMs"], tool_ms=activity["toolMs"], tool_calls=activity["toolCalls"], input_guardrail_ms=result["timings"]["inputGuardrailMs"], output_guardrail_ms=0, mlflow_setup_ms=tracer.setup_ms, mlflow_overhead_ms=tracer.overhead_ms, mlflow_flush_ms=flush_ms, trace_id=tracer.trace_id)
         store.record("debugger", "guardrail.evidence_blocked", outcome="blocked", trace_id=tracer.trace_id, details={"reasonCode": exc.policy["reasonCode"]})

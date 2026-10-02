@@ -84,6 +84,16 @@ def test_evaluator_manifest_has_no_kubernetes_identity_or_external_port():
     assert "serviceAccountName" not in pod
     assert all("secret" not in volume for volume in pod["volumes"])
     assert next(d for d in documents if d["kind"] == "Service")["spec"]["type"] == "ClusterIP"
+    model_url = next(e["value"] for e in pod["containers"][0]["env"] if e["name"] == "KRAVEL_JUDGE_BASE_URL")
+    assert local_model_url(model_url) == "http://host.docker.internal:12434/engines/v1"
+    agent_documents = list(yaml.safe_load_all((Path(__file__).parents[1] / "deploy/local.yaml").read_text()))
+    agent = next(d for d in agent_documents if d["kind"] == "Deployment" and d["metadata"]["name"] == "kravel")
+    assert next(e["value"] for e in agent["spec"]["template"]["spec"]["containers"][0]["env"] if e["name"] == "KRAVEL_LLM_BASE_URL") == model_url
+    observability = list(yaml.safe_load_all((Path(__file__).parents[1] / "deploy/observability-local.yaml").read_text()))
+    mlflow_deployment = next(d for d in observability if d["kind"] == "Deployment" and d["metadata"]["name"] == "kravel-mlflow")
+    arguments = mlflow_deployment["spec"]["template"]["spec"]["containers"][0]["args"]
+    assert "--artifacts-destination" in arguments and "--serve-artifacts" in arguments
+    assert "--default-artifact-root" not in arguments
 
 
 def test_suppressed_transport_failure_cannot_become_a_passing_score():

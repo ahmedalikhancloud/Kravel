@@ -223,7 +223,7 @@ function renderInvestigation(run) {
     for (const check of policy.checks || []) detail.append(node("p", "", `${check.passed ? "✓" : "○"} ${check.rule.replaceAll("_", " ")}: ${check.reason}`));
     detail.append(node("small", "", `${policy.policyVersion} · ${policy.framework || "fast preflight"} · probabilistic screening is not authorization`));
     for (const check of payload.guardrails?.semantic || []) detail.append(node("p", "", `${check.decision === "allow" ? "✓" : "⌾"} NeMo ${check.phase} · ${check.reasonCode} · ${formatDuration(check.latencyMs)}`));
-    if (payload.traceId) { const link = node("a", "trace-link", "See this request in MLflow ↗"); link.href = `http://127.0.0.1:5000/#/experiments/1/traces?selectedEvaluationId=${encodeURIComponent(payload.traceId)}`; link.target = "_blank"; link.rel = "noreferrer"; detail.append(link); }
+    if (payload.traceId) { const link = node("a", "trace-link", "See this request in MLflow ↗"); link.href = `http://127.0.0.1:5000/#/experiments/${encodeURIComponent(payload.experimentId || "1")}/traces?selectedEvaluationId=${encodeURIComponent(payload.traceId)}`; link.target = "_blank"; link.rel = "noreferrer"; detail.append(link); }
     elements.requestDecision.replaceChildren(node("b", "", `${policy.decision === "allow" ? "✓" : "⌾"} Request check · ${policy.decision}`), node("p", "", policy.reason), detail);
   }
   const classifierCalls = payload.guardrails?.classifierCalls || 0;

@@ -94,6 +94,9 @@ class EvaluationWorker:
         self.tracer = MlflowTracer(tracking_url, experiment, "redacted", "deep")
         if not self.tracer.enabled:
             raise RuntimeError("MLflow evaluation tracking is unavailable")
+        if source_experiment == experiment:
+            self.source_experiment = self.tracer.experiment
+        self.experiment = self.tracer.experiment
         judges = mlflow.get_experiment_by_name("Kravel Local Judges")
         self.tracer.destination_experiment_id = judges.experiment_id if judges else mlflow.create_experiment("Kravel Local Judges")
         self.scorers = builtins(model)
