@@ -1,8 +1,9 @@
-"""Novel repair plans with a deterministic, operator-enrolled execution boundary."""
+"""Structured repairs with a deterministic, approval-gated execution boundary."""
 from __future__ import annotations
 
 import copy
 import hashlib
+import os
 import shlex
 
 from .remediation import CONTAINER_FIELDS, POD_FIELDS, KINDS, NAME, load_profiles, no_directives, validate_profile
@@ -43,6 +44,9 @@ def validate_draft(draft, namespace):
 
 
 def authorized(draft):
+    mode = repair_mode()
+    if mode == "approval_gated":
+        return True, "Repair-capable agent: server dry-run and a separate human approval are mandatory; no resource enrollment is needed."
     kind, name = draft["kind"], draft["name"]
     profiles = [p for p in load_profiles() if p["kind"] == kind and p["name"] == name]
     # Existing demo capabilities remain exact, not a namespace-wide write grant.
@@ -66,6 +70,13 @@ def authorized(draft):
             if (set(container) - {"name"}) - permitted_containers.get(container["name"], set()):
                 return False, "This container and these fields have not been enrolled for repairs."
     return True, "Named field capability exists; server dry-run and separate human approval are still mandatory."
+
+
+def repair_mode():
+    mode = os.getenv("KRAVEL_REPAIR_MODE", "approval_gated")
+    if mode not in {"approval_gated", "enrolled_only"}:
+        raise ValueError("KRAVEL_REPAIR_MODE must be approval_gated or enrolled_only")
+    return mode
 
 
 def draft_fix(draft, namespace, *, require_authority=True):

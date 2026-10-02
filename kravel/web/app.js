@@ -298,6 +298,12 @@ function renderInvestigation(run) {
   }));
   elements.runReport.hidden = !payload.report && !payload.error;
   elements.runReport.replaceChildren(node("h3", "", payload.error ? "Investigation incomplete · evidence retained" : responseTitle(payload)), messageContent(payload.report || payload.error || ""));
+  const repairResource = state.cluster?.resources.find((resource) => `${resource.kind}/${resource.name}` === run.target);
+  if (repairResource && ["Deployment", "DaemonSet", "ConfigMap", "Service"].includes(repairResource.kind) && run.status === "completed" && payload.disposition === "success" && !payload.approvalRequests?.length) {
+    const review = node("button", "propose", "Ask Karl to prepare a repair & request approval");
+    review.addEventListener("click", () => askKarl(`Fix ${run.target} in ${run.namespace}. Investigate the evidence and request human approval for a supported repair. If the intended correct value is unknown, ask me for it; do not guess.`, run.target));
+    elements.runReport.append(review);
+  }
   renderRunbookContext(elements.runbookContext, payload);
   renderDraftRepairs(elements.draftRepairs, run, createDraftProposal);
   if (payload.timings) { const metrics = node("div", "metrics"); for (const [label, key] of [["Total", "totalMs"], ["Qwen", "modelMs"], ["Reads", "toolMs"], ["Retrieval", "retrievalMs"], ["Input guard", "inputGuardrailMs"], ["Output guard", "outputGuardrailMs"], ["Trace export", "traceFlushMs"]]) metrics.append(node("span", "", `${label} ${formatDuration(payload.timings[key])}`)); elements.runReport.append(metrics); }
@@ -443,7 +449,7 @@ function renderProposals() {
   elements.approvals.hidden = !state.proposals.length;
   elements.approvalCount.textContent = Math.min(state.proposals.length, 8);
   const open = new Set([...elements.proposalList.querySelectorAll("details[open]")].map((detail) => detail.dataset.id));
-  if (!state.proposals.length) { elements.proposalList.replaceChildren(node("div", "empty-state", "No proposed changes. Investigate a failure, then prepare an allowlisted fix.")); return; }
+  if (!state.proposals.length) { elements.proposalList.replaceChildren(node("div", "empty-state", "No proposed changes. Ask Karl to fix a problem, or inspect an investigation and request repair review.")); return; }
   elements.proposalList.replaceChildren(...state.proposals.slice(0, 8).map((proposal) => {
     const card = node("article", `proposal ${proposal.status}`), summary = node("div");
     summary.append(node("h3", "", `Repair ${proposal.resource}`), node("span", "deadline", proposal.status === "pending" ? `Your approval is needed before ${formatTime(proposal.expires_at)}` : `${formatTime(proposal.created_at)}${proposal.approval_actor ? ` · ${proposal.approval_actor}` : ""}`));

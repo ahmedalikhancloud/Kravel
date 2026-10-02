@@ -2,8 +2,16 @@
 
 Explore a real Kubernetes cluster, create one practice problem, ask Karl to investigate, and approve a repair. Everything runs locally: Docker Desktop Kubernetes, Qwen in Docker Model Runner, and localhost dashboards. No Groq key, Codespace, or public callback is needed.
 
-For the new 50-case field guide, unfamiliar-problem repair drafts, named DaemonSet
-enrollment and optional local hybrid RAG, follow [the repair coverage guide](docs/repair-coverage.md).
+For the 50-case field guide, unfamiliar-problem repairs, approval-gated writes for
+your own DaemonSets and optional local hybrid RAG, follow [the repair coverage guide](docs/repair-coverage.md).
+
+Karl can now make supported changes in `kravel-demo` through its approval-gated
+executor. Ask **“Fix the problem with DaemonSet/example-daemonset and request human
+approval”**. If the correct replacement is unknown, supply a verified image or
+configuration value first. Karl must not guess it. Review the exact command and
+server dry-run in Slack/Local Slack, then approve within five minutes. No thumbs-up
+means no change. The existing **Request server dry-run & human review** button also
+works; default mode no longer needs per-resource enrollment.
 
 ## 1. Prepare once
 

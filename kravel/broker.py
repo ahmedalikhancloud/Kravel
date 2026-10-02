@@ -18,7 +18,7 @@ from .evidence import Progress
 from .tracing import MlflowTracer
 from .slack import SlackApprovalClient
 from .utils import stable_json, to_iso
-from .drafts import draft_fix, resolve_proposal
+from .drafts import draft_fix, resolve_proposal, repair_mode
 
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
@@ -97,6 +97,7 @@ class ApprovalBroker:
             return self._create(fix["id"], namespace, actor, prepared_fix=fix)
 
     def _create(self, fix_id: str, namespace: str, actor: str, prepared_fix=None) -> dict:
+        repair_mode()
         for existing in self.store.active_proposals():
             if existing["fix_id"] == fix_id and existing["namespace"] == namespace and existing["status"] in {"pending", "approved", "executing"}:
                 return existing
@@ -216,6 +217,7 @@ class ApprovalBroker:
         root_context = tracer.span("repair.workflow", "CHAIN", {"proposal_id": proposal["id"], "fix_id": proposal["fix_id"]})
         root_span = root_context.__enter__()
         try:
+            repair_mode()
             fix = resolve_proposal(proposal)
             dry_runs = proposal["dryRun"]
             if len(dry_runs) != len(fix["operations"]) or any(result.get("planHash") != self._plan_hash(fix) for result in dry_runs):

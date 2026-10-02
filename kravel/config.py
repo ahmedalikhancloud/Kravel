@@ -62,6 +62,8 @@ class Config:
 
 
 def load_config() -> Config:
+    from .drafts import repair_mode
+    repair_mode()  # Invalid authorization configuration must fail at startup.
     return Config(
         host=os.getenv("KRAVEL_HOST", "127.0.0.1"),
         port=_integer("KRAVEL_PORT", 8080),

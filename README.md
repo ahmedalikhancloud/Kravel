@@ -2,11 +2,13 @@
 
 Karl now has a searchable **50-case production field guide**, local runbook RAG,
 bounded public documentation lookup and evidence-linked **novel repair drafts**.
-Execution remains restricted to operator-enrolled named resources/fields, server
-dry-run and a separate human approval. Hard node, control-plane and data recovery
-cases remain operator-led. See [repair coverage and Bash enrollment](docs/repair-coverage.md).
+Karl is now **repair-capable**, with namespace-scoped write permissions held by
+its execution service. Existing Deployments, DaemonSets, ConfigMaps and Services in
+`kravel-demo` can be patched after server dry-run and separate Slack/Local Slack
+human approval; no per-resource enrollment is needed by default. Hard node,
+control-plane and data recovery cases remain operator-led. See [repair coverage](docs/repair-coverage.md).
 
-Kravel is a local, guarded Kubernetes debugger built for a live demo. Karl—the pixel-art copilot—can inspect Pods, controllers, ConfigMaps, Events, and bounded logs through a strictly read-only ServiceAccount. A separate approval broker can repair five disposable demo failures, but only after Kubernetes server-side dry-run succeeds and a human approves within five minutes. Actual investigation and repair stages stay visible, followed by independent read-only recovery verification.
+Kravel is a local, guarded Kubernetes debugging and repair agent built for a live demo. Karl—the pixel-art copilot—investigates with read tools, drafts evidence-based repairs, and can request approval itself when you ask for a fix. Its separate execution ServiceAccount holds get/patch permissions for supported resources in `kravel-demo`, including resources you create manually. Only a passing Kubernetes server dry-run and an independent human approval within five minutes permit execution. Actual stages stay visible, followed by independent read-only recovery verification.
 
 The main browser UI renders the live namespace as a navigable WebGL 3D observatory. Orbit, pan, scroll to zoom, and click a Pod, Deployment, ReplicaSet, ConfigMap, or Service to inspect its sanitized manifest, Events, describe output, and connected Pod logs. Directional links use actual controller owner references, ConfigMap references, and Service selectors; they do not claim measured network traffic. All graphics libraries are bundled locally—no CDN, external fonts, or new credentials.
 
@@ -15,7 +17,7 @@ The main browser UI renders the live namespace as a navigable WebGL 3D observato
 - LangGraph + local Qwen debugging agent with no mutation, shell, exec, proxy, or Secret tools.
 - Read-only Kubernetes tools shaped like `get`, `describe`, `events`, and `logs`.
 - Evidence-first LangGraph investigations with evidence IDs, uncertainty, prevention, actual progress, and local run history.
-- A separate least-privilege approval broker restricted to four named Deployments, one named ConfigMap, and one named Service in `kravel-demo`.
+- A separate get/patch execution identity for existing Deployments, DaemonSets, ConfigMaps and Services in `kravel-demo`; structured field restrictions and mandatory human approval, not unrestricted cluster-admin.
 - A beginner-friendly practice guide, on-demand resource inspector, and checkmarked repair checklist driven by actual workflow steps.
 - Free local NVIDIA NeMo Guardrails: professional-language/injection preflight, semantic input/evidence/output checks, strict classifier schemas, fail-closed enforcement, and per-check MLflow timing. These reduce risk; they do not certify enterprise security or replace RBAC.
 - Human-only scenario buttons on a separate authenticated localhost controller: fixed lab catalog, server dry-run, 60-second one-use confirmation, stale-state checks, and healthy reset. Karl has no button/tool credential.

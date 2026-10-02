@@ -8,19 +8,19 @@ Browser ──▶ Debugger ─────────────────�
               │
               ├── input + scope guardrails ─▶ LangGraph/Qwen ─▶ output guardrail
               │                           │
-              │                           └── read-only tool loop
+              │                           └── read tools + structured repair drafts
               │
-              └── allowlisted fix ID ─▶ Approval broker
+              └── guarded fix ID / novel draft ─▶ Repair executor / approval broker
                                            │
-                                           ├── fixed structured patch
+                                           ├── deterministic structured patch validation
                                            ├── Kubernetes dryRun=All
                                            ├── Local/real Slack approval ≤ 5m
                                            └── narrowly scoped live patch
 ```
 
-## Read-only debugger
+## Repair agent with separate investigation identity
 
-The `kravel-debugger` ServiceAccount can get, list, and watch common non-secret resources and read the `pods/log` subresource. It cannot create, update, patch, delete, exec, attach, proxy, or read Secrets. LangGraph receives six matching tool schemas and no generic shell or Kubernetes client.
+Karl is write-capable through its approval-gated execution service. Its investigation identity, `kravel-debugger`, can get/list/watch non-secret resources and read `pods/log`, but cannot mutate Kubernetes, exec, attach, proxy, or read Secrets. LangGraph gets read tools, bounded reference retrieval, structured draft creation and a review-request tool; never a generic shell, approval credential or directly writable Kubernetes client. This prevents investigation tools from bypassing the manual gate.
 
 The live browser map calls the same read-only API. Its WebGL objects and directional connections come from current Pod, Deployment, ReplicaSet, ConfigMap, and Service lists; they are not a historical reconstruction or simulated topology.
 
@@ -32,13 +32,28 @@ Generic object-learning questions without a selected resource take a separate La
 
 ## Approval broker
 
-The broker runs in a different Pod with a different ServiceAccount and SQLite database. Its namespaced Role grants `get` and `patch` only for these names:
+The execution service runs in a different Pod with the `kravel-approval-broker`
+ServiceAccount and a separate SQLite database. Its Role grants `get` and `patch`
+on existing Deployments, DaemonSets, ConfigMaps and Services in `kravel-demo`,
+including manually created resources. It grants no create/update/delete, Secret,
+RBAC, exec, node or other-namespace write access. Default `approval_gated` mode
+does not need per-object enrollment. Optional `enrolled_only` applies the older
+named-field policy; operators must narrow RBAC separately for that deployment.
 
-- Deployments: `oom-demo`, `image-demo`, `crash-demo`, `config-demo`
-- ConfigMap: `config-demo`
-- Service: `demo-gateway`
+The broker accepts a catalog `fixId` or a strictly validated structured draft,
+never an arbitrary command. `request_repair_approval` stages a review selection
+only if the operator requested repair and it belongs to live findings/drafts in
+this investigation. Submission is deferred until output guards pass cleanly.
+The UI can also forward a draft from a saved, permitted, completed investigation.
 
-The broker accepts a `fixId`, never a command or user-supplied patch. Each fix ID resolves to immutable structured API operations in `kravel/fixes.py`. Creation first calls the Kubernetes API with `dryRun=All`. A human approval within 300 seconds moves the proposal to `approved`; only then does the worker repeat the exact catalog operation without dry-run.
+Every proposal resolves to exact structured API operations, validates existing
+container identity and calls Kubernetes with `dryRun=All` before requesting human
+approval. The command is generated from the patch, not model prose. A human
+approval within 300 seconds moves the proposal to `approved`; only then can the
+worker apply the reviewed operations. It revalidates current policy, plan hash,
+UID and specification, with resourceVersion preconditions. Denial, timeout,
+staleness, policy revocation and interrupted execution never trigger automatic
+replay. No agent tool can approve a proposal.
 
 The local approval credential exists only in the broker Pod and the localhost URL printed by the demo launcher. It is not mounted into the debugger Pod. Real Slack is an optional outbound adapter that posts the command and polls human emoji reactions.
 
@@ -67,6 +82,7 @@ Each agent investigation creates an MLflow root span with nested spans for:
 - each read-only Kubernetes tool call;
 - a separate guardrail scan of each tool result before it reaches Qwen;
 - output guardrail;
+- staged repair-review authorization and post-guard broker submission, when requested;
 - deterministic current-issue discovery.
 
 Prometheus also exposes end-to-end, Qwen, tool, guardrail, MLflow setup, span-overhead, and trace-flush timing. Approval status, age, approved fixes, and audited actions come from the broker.

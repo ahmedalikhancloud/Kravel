@@ -6,7 +6,7 @@ export function runbookCard(book, ask) {
   summary.append(el("span", book.title), el("small", book.group === "difficult" ? "Deep investigation" : book.group === "custom" ? "Team runbook" : "Common symptom")); card.append(summary);
   const body = el("div", "", "runbook-body");
   for (const [label, field] of [["1 · Establish the evidence", "evidenceRequired"], ["2 · Review the repair", "remediation"], ["3 · Verify the result", "verification"]]) body.append(el("b", label), el("p", book[field]));
-  body.append(el("p", book.executionMode === "operator_led" ? "Operator-led: this case does not grant Karl any execution capability." : "An exact named resource/field profile, dry-run and separate human approval are required for execution.", "runbook-boundary"));
+  body.append(el("p", book.executionMode === "operator_led" ? "Operator-led: this case does not grant Karl any execution capability." : "A supported, evidence-based structured patch, server dry-run and separate human approval are required. Default mode does not need per-resource enrollment.", "runbook-boundary"));
   const link = el("a", "Official reference ↗", "trace-link"); link.href = book.source; link.target = "_blank"; link.rel = "noopener noreferrer"; body.append(link);
   if (ask) { const button = el("button", "Ask Karl to investigate this possibility"); button.addEventListener("click", () => ask(book)); body.append(button); }
   card.append(body); return card;
@@ -55,6 +55,6 @@ export function renderDraftRepairs(container, run, submit) {
     const preview = el("details"); preview.append(el("summary", "Inspect the exact proposed patch"), el("pre", JSON.stringify(draft.draft.patch, null, 2))); card.append(preview, el("p", draft.authorizationReason, "runbook-boundary"));
     const button = el("button", "Request server dry-run & human review");
     button.addEventListener("click", async () => { button.disabled = true; try { await submit(run.id, draft.id); } finally { button.disabled = false; } });
-    button.disabled = run.status !== "completed"; card.append(button, el("small", "No change occurs here. Unenrolled repairs are rejected; only a separate human approval permits execution.")); container.append(card);
+    button.disabled = run.status !== "completed" || !draft.eligible; card.append(button, el("small", "This requests a preview and approval only. A separate human decision permits execution; expired or stale plans cannot run.")); container.append(card);
   }
 }

@@ -16,7 +16,7 @@ section "Checking active work before upgrading the debugger"
 check_active_work
 section "Building the extended guarded debugger (no new model downloads)"
 docker build --tag kravel:local "$KRAVEL_ROOT"
-section "Updating only Kravel runtime and read-only diagnostic coverage"
+section "Updating Kravel runtime and namespace-scoped approval-gated repair permissions"
 check_active_work
 kubectl apply -f "$KRAVEL_ROOT/deploy/local.yaml"
 kubectl -n kravel-system rollout restart deployment/kravel deployment/kravel-approval-broker

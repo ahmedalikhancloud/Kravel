@@ -29,8 +29,12 @@ def test_agent_and_broker_have_separate_least_privilege_roles():
     assert 'resources: ["pods/log"]' in debugger_role
     assert 'verbs: ["get", "list", "watch"]' in debugger_role
     assert "secrets" not in debugger_role and "patch" not in debugger_role and "delete" not in debugger_role
-    assert 'resourceNames: ["oom-demo", "image-demo", "crash-demo", "config-demo"]' in broker_role
+    assert 'resources: ["deployments", "daemonsets"]' in broker_role
+    assert 'resources: ["configmaps", "services"]' in broker_role
+    assert "resourceNames" not in broker_role
+    assert not any(verb in broker_role for verb in ("secrets", "pods/exec", '"create"', '"delete"', '"update"', '"*"'))
     assert 'verbs: ["get", "patch"]' in broker_role
+    assert manifest.count('name: KRAVEL_REPAIR_MODE, value: "approval_gated"') == 2
 
 
 def test_obsolete_time_travel_and_laya_assets_are_not_referenced_by_runtime():

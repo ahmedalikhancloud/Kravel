@@ -121,6 +121,11 @@ def guard_debugger_output(value, max_characters: int = 12_000):
     text, count = pattern.subn("[mutation command withheld; remediation requires human approval]", text)
     if count:
         findings.append({"code": "mutation_command_withheld", "count": count})
+    # An unpinned example is never a safe substitute for a verified replacement.
+    # Do not rely solely on a probabilistic reviewer for this explicit policy.
+    text, latest_count = re.subn(r"^.*[\w./-]+:latest\b.*$", "[latest-tag image advice withheld; ask for a verified replacement tag or digest]", text, flags=re.I | re.M)
+    if latest_count:
+        findings.append({"code": "latest_image_advice_withheld", "count": latest_count})
     from .fixes import public_catalog
     known_fix_ids = {fix["id"] for fix in public_catalog()}
     identifier = re.compile(r"fix[ _]?ids?\s*[:=]\s*([a-z0-9_-]+)", re.I)

@@ -20,6 +20,7 @@ from .guardrails import public_evidence
 from .scenarios import catalog as scenario_catalog, VERSION as SCENARIO_VERSION
 from .retrieval import retrieve
 from .remediation import load_profiles
+from .drafts import repair_mode
 
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
@@ -127,7 +128,7 @@ def create_server(store, config, kube):
                 if path == "/healthz":
                     return self.send_json(200, {"status": "ok"})
                 if path == "/readyz":
-                    return self.send_json(200, {"status": "ready", "mode": "read-only-debugger", "store": store.stats()})
+                    return self.send_json(200, {"status": "ready", "mode": "approval-gated-repair-agent", "store": store.stats()})
                 if path == "/metrics":
                     body = prometheus_metrics(store, "debugger").encode()
                     self.send_response(200); self.send_header("Content-Type", "text/plain; version=0.0.4"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
@@ -194,12 +195,13 @@ def create_server(store, config, kube):
                 if path == "/v1/capabilities":
                     enrolled = load_profiles()
                     return self.send_json(200, {
-                        "agent": {"mode": "read-only", "allowed": ["get", "list", "watch", "pods/log"], "denied": ["secrets", "pods/exec", "create", "update", "patch", "delete"]},
+                        "agent": {"mode": "approval-gated-repair", "allowed": ["get", "list", "watch", "pods/log", "draft_repair", "request_repair_approval"], "writesVia": "approval-broker", "directKubernetesWrites": False, "denied": ["secrets", "pods/exec", "create", "update", "delete", "approve", "rbac"]},
                         "broker": {
                             "namespace": "kravel-demo", "verbs": ["get", "patch"],
-                            "resources": {"deployments": ["oom-demo", "image-demo", "crash-demo", "config-demo"], "configmaps": ["config-demo"], "services": ["demo-gateway"]},
+                            "resources": {"deployments": "existing resources in kravel-demo", "daemonsets": "existing resources in kravel-demo", "configmaps": "existing resources in kravel-demo", "services": "existing resources in kravel-demo"},
+                            "repairMode": repair_mode(),
                             "enrolledProfiles": [{k: p[k] for k in ("id", "kind", "name", "scenarioId")} for p in enrolled],
-                            "novelRepairs": "Structured drafts only; enrolled named fields + server dry-run + human approval required",
+                            "novelRepairs": "Validated structured patches + server dry-run + human approval; no per-resource enrollment in approval_gated mode",
                             "requiresHumanApproval": True, "approvalTimeoutSeconds": 300,
                         },
                         "console": {"mode": "human-only", "namespace": "kravel-demo", "shell": False, "agentAccess": False, "writesRequirePreviewConfirmation": True},

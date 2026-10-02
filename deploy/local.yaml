@@ -72,16 +72,10 @@ metadata:
   namespace: kravel-demo
 rules:
   - apiGroups: ["apps"]
-    resources: ["deployments"]
-    resourceNames: ["oom-demo", "image-demo", "crash-demo", "config-demo"]
+    resources: ["deployments", "daemonsets"]
     verbs: ["get", "patch"]
   - apiGroups: [""]
-    resources: ["configmaps"]
-    resourceNames: ["config-demo"]
-    verbs: ["get", "patch"]
-  - apiGroups: [""]
-    resources: ["services"]
-    resourceNames: ["demo-gateway"]
+    resources: ["configmaps", "services"]
     verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -157,6 +151,7 @@ spec:
             - {name: KRAVEL_CLUSTER_ID, value: "docker-desktop"}
             - {name: KRAVEL_DEFAULT_NAMESPACE, value: "kravel-demo"}
             - {name: KRAVEL_REPAIR_PROFILES_PATH, value: "/repair-policy/profiles.json"}
+            - {name: KRAVEL_REPAIR_MODE, value: "approval_gated"}
             - {name: KRAVEL_BROKER_URL, value: "http://kravel-approval-broker.kravel-system.svc.cluster.local:8090"}
             - {name: KRAVEL_OPERATOR_URL, value: "http://kravel-operator.kravel-system.svc.cluster.local:8082"}
             - {name: KRAVEL_LLM_BASE_URL, value: "http://host.docker.internal:12434/engines/v1"}
@@ -243,6 +238,7 @@ spec:
             - {name: KRAVEL_DEFAULT_NAMESPACE, value: "kravel-demo"}
             - {name: KRAVEL_APPROVAL_TIMEOUT_SECONDS, value: "300"}
             - {name: KRAVEL_REPAIR_PROFILES_PATH, value: "/repair-policy/profiles.json"}
+            - {name: KRAVEL_REPAIR_MODE, value: "approval_gated"}
             - name: KRAVEL_APPROVAL_TOKEN
               valueFrom:
                 secretKeyRef: {name: kravel-approval-token, key: token}

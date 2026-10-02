@@ -33,6 +33,7 @@ def pod():
 
 
 def enroll(tmp_path, monkeypatch):
+    monkeypatch.setenv("KRAVEL_REPAIR_MODE", "enrolled_only")
     profile = make_profile(daemonset(), "legacy_image_format", container="fluentd")
     path = tmp_path / "policy.json"
     path.write_text(json.dumps({"version": 1, "profiles": [profile]}))
@@ -46,7 +47,7 @@ def draft():
 
 @pytest.fixture(autouse=True)
 def isolate_local_configuration(monkeypatch):
-    for name in ("KRAVEL_REPAIR_PROFILES_PATH", "KRAVEL_RUNBOOKS_PATH", "KRAVEL_RAG_EMBEDDING_PATH", "KRAVEL_RAG_RERANKER_PATH"):
+    for name in ("KRAVEL_REPAIR_MODE", "KRAVEL_REPAIR_PROFILES_PATH", "KRAVEL_RUNBOOKS_PATH", "KRAVEL_RAG_EMBEDDING_PATH", "KRAVEL_RAG_RERANKER_PATH"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -112,7 +113,7 @@ def test_enrollment_generates_only_named_broker_rbac(tmp_path, monkeypatch):
     assert manifest["items"][2]["subjects"][0]["name"] == "kravel-approval-broker"
 
 
-@pytest.mark.parametrize("change", ["namespace", "secret", "hostNetwork", "serviceAccountName", "privileged", "directive", "delete", "metadata", "container"])
+@pytest.mark.parametrize("change", ["namespace", "secret", "hostNetwork", "serviceAccountName", "privileged", "directive", "delete", "metadata"])
 def test_novel_repair_rejects_scope_and_privilege_expansion(tmp_path, monkeypatch, change):
     enroll(tmp_path, monkeypatch)
     value = draft(); namespace = "kravel-demo"
@@ -129,6 +130,7 @@ def test_novel_repair_rejects_scope_and_privilege_expansion(tmp_path, monkeypatc
 
 
 def test_unseen_repair_values_are_supported_but_unenrolled_target_is_not(tmp_path, monkeypatch):
+    monkeypatch.setenv("KRAVEL_REPAIR_MODE", "enrolled_only")
     idea = draft_fix(draft(), "kravel-demo", require_authority=False)
     assert not idea["eligible"]
     with pytest.raises(ValueError, match="enrollment"):
@@ -149,7 +151,8 @@ def test_container_field_permissions_do_not_transfer_to_other_enrolled_container
         draft_fix(value, "kravel-demo")
 
 
-def test_novel_configmap_keys_require_explicit_operator_enrollment():
+def test_novel_configmap_keys_require_explicit_operator_enrollment(monkeypatch):
+    monkeypatch.setenv("KRAVEL_REPAIR_MODE", "enrolled_only")
     value = {"kind": "configmaps", "name": "config-demo", "patch": {"data": {"NEW_KEY": "new-value"}},
         "rationale": "Review an independently established configuration value.", "evidenceIds": ["E4"]}
     with pytest.raises(ValueError, match="data keys"):
@@ -202,7 +205,6 @@ def broker_config(): return SimpleNamespace(slack_bot_token="", slack_channel_id
 
 
 def test_novel_draft_requires_dry_run_human_approval_and_current_daemonset_recovery(tmp_path, monkeypatch):
-    enroll(tmp_path, monkeypatch)
     monkeypatch.setattr(ApprovalBroker, "_start_waiter", lambda *_: None)
     kube, store = MutableKube(), AuditStore(); broker = ApprovalBroker(kube, store, broker_config())
     proposal = broker.create_draft(draft(), "kravel-demo")
@@ -300,7 +302,7 @@ def test_langgraph_stages_a_novel_plan_and_traces_retrieval_without_submitting_a
         def pod_logs(self, *_args): raise RuntimeError("Image never started")
     store = AuditStore(); store.start_workflow("run", "investigation", "kravel-demo")
     result = debugger.run_debugger(Kube(), store, load_config(), "Investigate my DaemonSet image failure and draft a repair for review", "kravel-demo", run_id="run", progress=Progress(store, "run"), target="DaemonSet/example-daemonset")
-    assert result["draftRepairs"] and not result["draftRepairs"][0]["eligible"]
+    assert result["draftRepairs"] and result["draftRepairs"][0]["eligible"]
     assert result["mutationExecuted"] is False and not store.active_proposals()
     assert {"rag.bm25", "rag.context", "tool.draft_repair", "tool.authorization"} <= set(tracer.names)
     assert result["runbooks"]["hits"] and result["timings"]["retrievalMs"] > 0

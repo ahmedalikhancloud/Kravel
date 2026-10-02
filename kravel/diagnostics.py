@@ -96,7 +96,12 @@ def enrich_findings(findings, objects, events, namespace):
         elif any(by_id(sid).get("executionMode") == "operator_led" for sid in ids):
             finding["repairAvailability"] = "Operator-led repair: additional owner evidence/authority is required; Karl cannot execute this runbook."
         else:
-            finding["repairAvailability"] = "No executable repair enrolled for this object. An operator must review a healthy baseline and grant named broker permissions first."
+            from .drafts import repair_mode
+            from .remediation import KINDS
+            if namespace == "kravel-demo" and kind in KINDS.values() and repair_mode() == "approval_gated":
+                finding["repairAvailability"] = "Karl can draft a new repair when the intended correct value is established. Server dry-run and separate Slack/Local Slack human approval are required; no resource enrollment is needed."
+            else:
+                finding["repairAvailability"] = "No executable repair enrolled for this object. An operator must review a healthy baseline and grant named broker permissions first."
     return findings
 
 

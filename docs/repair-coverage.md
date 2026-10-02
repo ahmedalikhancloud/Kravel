@@ -27,12 +27,16 @@ An investigation displays its retrieved references and any newly drafted repair.
    bounded public documentation page if there is an unresolved question.
 3. If the intended correct value is known, Karl can call `draft_repair` with a
    structured patch and actual investigation evidence IDs. It cannot execute or
-   submit approval through this tool. Unknown correct values must be requested,
+   submit approval through this tool. When you ask for a fix, Karl can additionally
+   stage `request_repair_approval`; only after all guards pass does the application
+   submit the exact plan to the broker for dry-run and Slack/Local Slack review.
+   Unknown correct values must be requested,
    not guessed. A different application image is not a legitimate image-pull fix.
 4. You inspect the patch and choose **Request server dry-run & human review**.
-5. The separate broker rechecks deterministic field policy, named enrollment and
-   Kubernetes RBAC. Unknown resources/fields are rejected, even if the model says
-   the change was approved. It runs Kubernetes server dry-run and records exact
+5. The separate executor rechecks deterministic kind/field policy and Kubernetes
+   RBAC. Existing supported resources need no per-resource enrollment in default
+   `approval_gated` mode. Unsupported fields/kinds/namespaces are rejected, even
+   if the model says the change was approved. It runs server dry-run and records exact
    resource identity/spec and plan hashes.
 6. A separate human approves in Local Slack/Slack within five minutes. Stale,
    revoked, interrupted, expired or unapproved plans never execute automatically.
@@ -40,21 +44,41 @@ An investigation displays its retrieved references and any newly drafted repair.
    recovery checks. Readiness is not an end-to-end traffic test. ConfigMap-only
    changes do not claim consumer recovery; that needs operator verification.
 
-Novel drafts support **named Deployments, DaemonSets, Services and ConfigMaps in
-`kravel-demo`**, and only explicitly enrolled fields. StatefulSets are investigated
+Novel drafts support **existing Deployments, DaemonSets, Services and ConfigMaps in
+`kravel-demo`**, with validated container image/command/args/resources/probes,
+Pod scheduling/DNS fields, ConfigMap data and Service selector/ports. The executor
+has namespace-scoped get/patch permissions; no object enrollment is required by
+default. Existing container identity is verified before dry-run. StatefulSets are investigated
 and visualized, but stateful/quorum mutations remain operator-led. There is no
 arbitrary shell, secret access, RBAC editing, node mutation, Pod exec, deletion,
 cluster-wide write, or policy bypass tool. The five existing lab fixes still work.
 
-## Enroll your manually created DaemonSet
+## Fix your manually created DaemonSet
 
 For your `example-daemonset`, the observed pull Event reports an obsolete
 schema1/`prettyjws` image format. A compatible replacement must be a verified
 Fluentd image with the logging plugins/configuration you intend; do not use BusyBox
 or an unverified image just to make the Pod green.
 
-Set the variable below to your independently verified replacement. This deliberately
-does not ship a guessed application image:
+Ask Karl to investigate the DaemonSet and repair it using an independently verified
+replacement Fluentd tag/digest. Include that intended value in your question.
+Karl can draft the patch, request dry-run/review, and execute through its repair
+service after your approval. Do not give Karl a thumbs-up in chat: approve in the
+separate Slack/Local Slack inbox. No terminal enrollment is required.
+
+If Karl only drafts, use **Request server dry-run & human review** on the draft.
+If a correct replacement is unknown, Karl must ask for it instead of inventing one.
+
+## Optional locked-down enrollment mode (operator configuration)
+
+The original named-profile workflow remains available as `enrolled_only` mode.
+This is **not** the default and is unnecessary for ordinary local demo repairs.
+An operator must configure both worker and broker with that mode **and** narrow
+`kravel-demo-fix-executor` to reviewed `resourceNames`. Changing the mode alone
+does not reduce Kubernetes RBAC; roles are additive, not deny rules.
+
+In that optional mode, set the variable below to your independently verified
+replacement. This deliberately does not ship a guessed application image:
 
 ```bash
 read -r -p 'Verified replacement Fluentd image/tag or digest: ' VERIFIED_FLUENTD_IMAGE
@@ -63,7 +87,7 @@ bash demo/local/enroll-repair.sh daemonsets example-daemonset legacy_image_forma
   --container fluentd --image "$VERIFIED_FLUENTD_IMAGE"
 ```
 
-The helper only generates ignored local files. It does **not** apply anything.
+The optional helper only generates ignored local files. It does **not** apply anything.
 Inspect `data/repair-enrollment.json`: it contains a policy ConfigMap in
 `kravel-system`, plus a `Role`/`RoleBinding` granting **only get/patch of the named
 DaemonSet** to the approval broker. The debugger gets no write permissions.
@@ -89,7 +113,9 @@ Multiple profiles are retained in the local policy file. Treat it as an operator
 configuration artifact, keep it out of Git, and protect its directory. Enrollment
 is intentionally not something Karl can perform.
 
-Revoke all custom repair enrollments without deleting workloads or history:
+In `enrolled_only` mode, remove custom profiles/grants without deleting workloads
+or history. This does NOT revoke namespace-wide writes in `approval_gated` mode;
+those require narrowing/removing the executor's base Role/RoleBinding as well:
 
 ```bash
 kubectl -n kravel-demo delete rolebinding kravel-enrolled-repairs --ignore-not-found
@@ -162,7 +188,8 @@ From Kravel's request trace shortcut, inspect `rag.bm25`, optional `rag.dense`,
 `rag.rrf`, optional `rag.cross_encoder`, and `rag.context`. The latter records
 sanitized query, document IDs, source/version, content and actual/fallback mode.
 `tool.search_runbooks`, `tool.fetch_reference`, `tool.draft_repair`,
-`tool.authorization`, evidence guards, Qwen inference and output guards are also
+`tool.request_repair_approval`, `repair.request_approval`, `tool.authorization`,
+evidence guards, Qwen inference and output guards are also
 separate spans. Metadata-only mode still omits content intentionally; local demo
 redacted/deep mode exposes sanitized content. A draft never counts as execution.
 
