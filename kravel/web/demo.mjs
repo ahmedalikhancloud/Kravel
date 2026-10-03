@@ -16,7 +16,7 @@ export function sessionItems(items, session, timestamp = 'started_at') {
 }
 
 export function responseTitle(payload) {
-  return payload.responseKind === 'request_blocked' ? 'Request paused · safety check' : payload.responseKind === 'scope_help' ? 'Karl’s guide · no cluster reads' : payload.responseKind === 'learning_explanation' ? 'Learn with Karl · general explanation' : 'Karl’s analysis · check the evidence';
+  return payload.disposition === 'needs_input' ? 'One detail needed before planning' : payload.disposition === 'review_failed' ? 'Plan needs review · validation did not pass' : payload.disposition === 'incomplete' ? 'Investigation incomplete · evidence retained' : payload.responseKind === 'request_blocked' ? 'Request paused · safety check' : payload.responseKind === 'scope_help' ? 'Karl’s guide · no cluster reads' : payload.responseKind === 'learning_explanation' ? 'Learn with Karl · general explanation' : 'Karl’s analysis · check the evidence';
 }
 
 export function resourceIssues(cluster, kind, name) {

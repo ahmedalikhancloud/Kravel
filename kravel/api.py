@@ -21,6 +21,7 @@ from .scenarios import catalog as scenario_catalog, VERSION as SCENARIO_VERSION
 from .retrieval import retrieve, service_request as rag_request
 from .remediation import load_profiles
 from .drafts import repair_mode
+from .approval_client import broker_call, BrokerRequestError
 
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
@@ -45,13 +46,7 @@ WEB_ASSETS = {
 
 
 def _broker_request(config, path: str, method: str = "GET", body=None):
-    url = safe_service_url(config.broker_url, "approval broker") + path
-    data = json.dumps(body).encode() if body is not None else None
-    headers = {"Accept": "application/json", "User-Agent": "kravel/0.3.0"}
-    if data is not None:
-        headers["Content-Type"] = "application/json"
-    with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers, method=method), timeout=120 if body and "plan" in body else 20) as response:
-        return json.load(response)
+    return broker_call(config, path, body, method=method, timeout=120 if body and "plan" in body else 20)
 
 
 def _evaluation_request(config, path, method="GET", body=None):
@@ -226,6 +221,8 @@ def create_server(store, config, kube):
                         "console": {"mode": "human-only", "namespace": "kravel-demo", "shell": False, "agentAccess": False, "writesRequirePreviewConfirmation": True},
                     })
                 return self.send_json(404, {"error": "not_found"})
+            except BrokerRequestError as exc:
+                return self.send_json(exc.status, {"error": str(exc), **exc.details, "reviewCreated": False if exc.confirmed_rejected else None})
             except Exception as exc:
                 return self.send_json(400, {"error": str(exc)})
 
@@ -305,6 +302,8 @@ def create_server(store, config, kube):
                     store.record("debugger", "proposal.forwarded", actor="operator", resource=proposal.get("resource", ""), outcome=proposal.get("status", "pending"), details={"proposalId": proposal.get("id", ""), "fixId": payload["fixId"]})
                     return self.send_json(201, proposal)
                 return self.send_json(404, {"error": "not_found"})
+            except BrokerRequestError as exc:
+                return self.send_json(exc.status, {"error": str(exc), **exc.details, "reviewCreated": False if exc.confirmed_rejected else None})
             except Exception as exc:
                 return self.send_json(400, {"error": str(exc)})
 

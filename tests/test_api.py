@@ -64,6 +64,30 @@ def test_broker_rejects_missing_approval_credential(monkeypatch):
     assert sum(item["action"] == "approval.denied" for item in store.audit_entries()) == 2
 
 
+def test_exact_plan_validation_error_survives_broker_proxy_and_is_redacted(monkeypatch):
+    from kravel.cluster_plans import canonical_plan, PlanValidationError
+    config = load_config(); config.host, config.port = "127.0.0.1", 0
+    config.slack_bot_token = config.slack_channel_id = ""
+    store = AuditStore()
+    draft = canonical_plan({"title": "Repair settings", "summary": "Proposed minimal change", "files": {}, "steps": [{"label": "Patch", "argv": ["patch", "configmap", "settings", "-p", '{"data":{"MODE":"healthy"}}']}]})
+    store.start_workflow("run", "investigation", "kravel-demo")
+    store.save_cluster_plan("run", draft)
+    store.update_workflow("run", status="completed", payload={"clusterPlans": [{"id": draft["id"]}], "disposition": "success"})
+    broker = ApprovalBroker(object(), AuditStore(), config)
+    def rejected(*_args):
+        raise PlanValidationError({"step": 1, "label": "Patch"}, {"exitCode": 1, "stdout": "", "stderr": "cannot restore slice from map; password=should-not-leak"})
+    monkeypatch.setattr(broker, "create_plan", rejected)
+    with serving(create_broker_server(broker, config)) as broker_url:
+        config.broker_url = broker_url
+        with serving(create_server(store, config, object())) as base:
+            status, body = post(base, "/v1/proposals", {"runId": "run", "planId": draft["id"]})
+            assert status == 400 and "cannot restore slice from map" in body["error"]
+            assert body["errorCode"] == "plan_validation_failed" and body["reviewCreated"] is False
+            assert body["validation"]["step"] == 1
+            assert "should-not-leak" not in json.dumps(body)
+    assert broker.store.proposals() == []
+
+
 def test_local_3d_assets_are_served_with_strict_csp_without_remote_scripts():
     config = load_config()
     config.host, config.port = "127.0.0.1", 0

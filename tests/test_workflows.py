@@ -47,6 +47,19 @@ def test_collector_partial_reads_are_gaps_and_evidence_is_sanitized():
     assert store.workflow("run")["steps"][0]["status"] == "unavailable"
 
 
+def test_missing_logs_are_explicit_evidence_gaps_not_success_or_crash():
+    class Kube(EvidenceKube):
+        def list_resources(self, kind, namespace, **kwargs):
+            if kind == "pods": return {"items": [{"kind": "Pod", "metadata": {"name": "failing-image"}, "spec": {"containers": [{"name": "app"}]}, "status": {"phase": "Pending", "containerStatuses": [{"name": "app", "state": {"waiting": {"reason": "ImagePullBackOff"}}}]}}]}
+            return super().list_resources(kind, namespace, **kwargs)
+        def pod_logs(self, *_): return {"logs": "", "available": False, "reason": "Container has not started"}
+    store = AuditStore(); store.start_workflow("run", "investigation", "kravel-demo")
+    result = collect_evidence(Kube(), "kravel-demo", Progress(store, "run"), Tracer())
+    log = next(e for e in result["evidence"] if "logs" in e["label"])
+    assert log["status"] == "unavailable" and any("Container has not started" in gap for gap in result["gaps"])
+    assert next(s for s in store.workflow("run")["steps"] if s["step_key"] == "logs_1")["status"] == "unavailable"
+
+
 def test_selector_diagnosis_is_grounded_and_network_probe_is_not_claimed():
     store = AuditStore()
     store.start_workflow("run", "investigation", "kravel-demo")

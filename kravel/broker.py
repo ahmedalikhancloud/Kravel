@@ -19,7 +19,7 @@ from .tracing import MlflowTracer
 from .slack import SlackApprovalClient
 from .utils import stable_json, to_iso
 from .drafts import draft_fix, resolve_proposal, repair_mode
-from .cluster_plans import KubectlExecutor, canonical_plan, require_operator
+from .cluster_plans import KubectlExecutor, canonical_plan, require_operator, PlanValidationError
 from .config import KubeConfig
 
 
@@ -124,10 +124,14 @@ class ApprovalBroker:
         try:
             with tracer.span("repair.review", "CHAIN", {"proposal_id": proposal_id}) as span, progress.step("dry_run", "Validate commands · server dry-run where supported" if fix.get("clusterPlan") else "Kubernetes server dry-run"):
                 span.set_content_inputs({"resource": fix["resource"], "command": fix["command"], "generated_plan": fix.get("clusterPlan", {}).get("plan", {})})
-                dry_run = self._dry_run(fix)
+                try:
+                    dry_run = self._dry_run(fix)
+                except PlanValidationError as exc:
+                    span.set_content_outputs({"validation_results": [exc.details], "mutation_persisted": False, "review_created": False})
+                    raise
                 span.set_content_outputs({"validation_results": [{k: v for k, v in row.items() if k != "reviewedPlan"} for row in dry_run], "mutation_persisted": False})
-        except Exception:
-            self.store.update_workflow(proposal_id, status="failed")
+        except Exception as exc:
+            self.store.update_workflow(proposal_id, status="failed", payload={"error": str(exc), **({"validation": exc.details} if isinstance(exc, PlanValidationError) else {})})
             raise
         finally:
             tracer.flush()
@@ -394,6 +398,6 @@ def create_broker_server(broker: ApprovalBroker, config):
                 return self.json(404, {"error": "not_found"})
             except Exception as exc:
                 broker.store.record("approval-broker", "request.rejected", actor="caller", outcome="error", details={"path": path, "errorType": type(exc).__name__})
-                return self.json(400, {"error": str(exc)})
+                return self.json(400, {"error": str(exc), **({"errorCode": "plan_validation_failed", "validation": exc.details, "reviewCreated": False} if isinstance(exc, PlanValidationError) else {})})
 
     return ThreadingHTTPServer((config.host, config.port), Handler)

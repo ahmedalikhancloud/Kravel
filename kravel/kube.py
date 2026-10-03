@@ -115,7 +115,13 @@ class KubernetesClient:
 
     def pod_logs(self, pod: str, namespace: str, container: str = "", previous: bool = False, tail_lines: int = 120):
         path = self.resource_path("pods", namespace, pod) + "/log"
-        payload, elapsed = self.request("GET", path, query={"container": container, "previous": str(bool(previous)).lower(), "tailLines": min(max(int(tail_lines), 1), 500), "timestamps": "true"})
+        try:
+            payload, elapsed = self.request("GET", path, query={"container": container, "previous": str(bool(previous)).lower(), "tailLines": min(max(int(tail_lines), 1), 500), "timestamps": "true"})
+        except KubernetesAPIError as exc:
+            message = str(exc)
+            if message.startswith("Kubernetes API 400:") and ("previous terminated container" in message and "not found" in message or "waiting to start" in message):
+                return {"pod": pod, "namespace": namespace, "previous": bool(previous), "logs": "", "available": False, "reason": "No previous container logs exist; use current Pod state and Events." if previous else "Container has not started, so logs are unavailable; use Pod state and image-pull/startup Events."}
+            raise
         return {"pod": pod, "namespace": namespace, "previous": bool(previous), "logs": str(payload)[-40_000:], "durationMs": elapsed}
 
     def events(self, namespace: str, regarding_name: str = "", limit: int = 100):

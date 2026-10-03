@@ -5,6 +5,14 @@ No parallel resident agents or hidden additional cloud/model dependencies.
 import re
 
 
+def changes_requested(question):
+    """Diagnosis is not authorization to stage a mutation, even in cluster mode."""
+    if re.search(r"\bread[- ]only\b|\b(?:do not|don't|never|no)\s+(?:make\s+|apply\s+)?(?:changes|mutations|writes)\b", question, re.I):
+        return False
+    question = re.sub(r"\b(?:do not|don't|never)\s+(?:request\s+(?:human\s+)?approval|fix|repair|change|mutate|write)\b", "", question, flags=re.I)
+    return bool(re.search(r"\b(?:fix|repair|remediate|create|deploy|configure|build|apply|replace|patch|delete|remove|scale|restart|drain|cordon|uncordon|taint|label|annotate|exec|migrate|update|install|set up)\b|\brequest\s+(?:human\s+)?approval\b", question, re.I))
+
+
 def select_model(config, question, *, learning=False, override=""):
     fast = config.llm_model
     thinker = getattr(config, "llm_thinking_model", "")

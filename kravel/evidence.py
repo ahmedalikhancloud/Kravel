@@ -39,9 +39,10 @@ def collect_evidence(kube, namespace, progress, tracer, target=""):
                 with tracer.span(f"evidence.{key}", "TOOL", {"namespace": namespace}) as span:
                     span.set_content_inputs({"label": label, "resource": resource, "read_limit": 100 if not key.startswith("logs_") else 60})
                     result = call()
-                    span.set_outputs({"status": "success"})
+                    span.set_outputs({"status": "unavailable" if result.get("available") is False else "success"})
                     span.set_content_outputs({"result": result})
-                body, outcome = public_evidence(result), "observed"
+                body, outcome = public_evidence(result), "unavailable" if result.get("available") is False else "observed"
+                if outcome == "unavailable": gaps.append(f"{label}: {body.get('reason', 'unavailable')}")
             except Exception as exc:
                 body, outcome = {"error": public_evidence(str(exc))}, "unavailable"
                 gaps.append(f"{label}: unavailable")

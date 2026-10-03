@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validationLabel, readableReport} from '../kravel/web/plans.mjs';
+import {validationLabel, readableReport, attachReviewSubmission} from '../kravel/web/plans.mjs';
 import {repairTimeline} from '../kravel/web/demo.mjs';
 
 test('unsupported/deferred validation is never mislabeled server dry-run passed', () => {
@@ -22,4 +22,38 @@ test('a model JSON envelope is readable prose, never an executable UI action', (
   assert.equal(readableReport('Ordinary prose'), 'Ordinary prose');
   const unknown = JSON.stringify({summary:'Text', commands:['delete','namespace','default']});
   assert.equal(readableReport(unknown), unknown);
+});
+
+class Element {
+  constructor(tag) { this.tagName = tag; this.children = []; this.textContent = ''; this.handlers = {}; }
+  append(...children) { this.children.push(...children); }
+  replaceChildren(...children) { this.children = children; }
+  setAttribute() {}
+  addEventListener(name, handler) { this.handlers[name] = handler; }
+}
+
+test('validation rejection stays inline, retains details, and never rejects the click handler', async () => {
+  globalThis.document = {createElement: (tag) => new Element(tag)};
+  try {
+    const card = new Element('article'), button = new Element('button'), states = new Map(); button.textContent = 'Validate';
+    const error = new Error('Step 1 failed server dry-run: cannot restore slice from map'); error.details = {reviewCreated:false, validation:{step:1,validation:'failed'}};
+    attachReviewSubmission(card, button, {id:'run',status:'completed',payload:{}}, 'plan-id', async () => { throw error; }, states);
+    await button.handlers.click();
+    assert.equal(states.get('run/plan-id').status, 'failed'); assert.equal(button.disabled, false);
+    const text = JSON.stringify(card.children);
+    assert.match(text, /cannot restore slice from map/); assert.match(text, /No approval request was created/); assert.match(text, /Kubernetes validation details/);
+  } finally { delete globalThis.document; }
+});
+
+test('lost delivery disables resubmission and successful delivery cannot double-submit', async () => {
+  globalThis.document = {createElement: (tag) => new Element(tag)};
+  try {
+    for (const unknown of [false, true]) {
+      let calls = 0; const card = new Element('article'), button = new Element('button'); button.textContent = 'Validate';
+      attachReviewSubmission(card, button, {id:'run',status:'completed',payload:{}}, 'plan', async () => { calls++; if (unknown) throw new Error('Transport unavailable'); return {id:'proposal'}; });
+      await button.handlers.click(); await button.handlers.click();
+      assert.equal(calls, 1); assert.equal(button.disabled, true);
+      assert.match(JSON.stringify(card.children), unknown ? /Delivery is uncertain/ : /Review requested/);
+    }
+  } finally { delete globalThis.document; }
 });

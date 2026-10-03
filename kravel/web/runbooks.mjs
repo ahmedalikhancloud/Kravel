@@ -1,5 +1,6 @@
 // Reference knowledge is deliberately separate from actionable repair authority.
 import { mlflowUrl } from "./observability.mjs";
+import { attachReviewSubmission } from "./plans.mjs";
 function el(tag, text = "", className = "") { const item = document.createElement(tag); item.textContent = text; item.className = className; return item; }
 
 function link(label, url) { const a = el("a", label, "trace-link"); a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer"; return a; }
@@ -119,7 +120,7 @@ export function renderRunbookContext(container, payload) {
   const trace = mlflowUrl("trace", context.experimentId, context.traceId); if (trace) group.append(link("Open the retrieval service trace ↗", trace));
 }
 
-export function renderDraftRepairs(container, run, submit) {
+export function renderDraftRepairs(container, run, submit, submissions = new Map()) {
   container.replaceChildren(); const drafts = run.payload?.disposition === "blocked" ? [] : run.payload?.draftRepairs || [];
   container.hidden = !drafts.length;
   for (const draft of drafts) {
@@ -127,7 +128,9 @@ export function renderDraftRepairs(container, run, submit) {
     card.append(el("span", "NEW REPAIR IDEA · NOT EXECUTED", "eyebrow"), el("h3", draft.resource), el("p", draft.draft.rationale));
     const preview = el("details"); preview.append(el("summary", "Inspect the exact proposed patch"), el("pre", JSON.stringify(draft.draft.patch, null, 2))); card.append(preview, el("p", draft.authorizationReason, "runbook-boundary"));
     const button = el("button", "Request server dry-run & human review");
-    button.addEventListener("click", async () => { button.disabled = true; try { await submit(run.id, draft.id); } finally { button.disabled = false; } });
-    button.disabled = run.status !== "completed" || !draft.eligible; card.append(button, el("small", "This requests a preview and approval only. A separate human decision permits execution; expired or stale plans cannot run.")); container.append(card);
+    card.append(button, el("small", "This requests a preview and approval only. A separate human decision permits execution; expired or stale plans cannot run."));
+    attachReviewSubmission(card, button, run, draft.id, submit, submissions);
+    if (!draft.eligible) button.disabled = true;
+    container.append(card);
   }
 }

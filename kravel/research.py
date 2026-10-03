@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from .guardrails import guard_model_input
 
 HOSTS = {"kubernetes.io": "/docs/", "docs.docker.com": "/", "sbert.net": "/"}
+HOSTS.update({"docs.fluentd.org": "/", "raw.githubusercontent.com": "/docker-library/official-images/master/library/"})
 APPROVED_PATHS = {
     "kubernetes.io": {
         "/docs/tasks/debug/debug-application/", "/docs/tasks/debug/debug-application/debug-running-pod/",
@@ -28,6 +29,8 @@ APPROVED_PATHS = {
     },
     "docs.docker.com": {"/engine/deprecated/", "/ai/model-runner/", "/engine/storage/"},
     "sbert.net": {"/examples/sentence_transformer/applications/retrieve_rerank/README.html"},
+    "docs.fluentd.org": {"/container-deployment/install-by-docker", "/output/elasticsearch", "/configuration/config-file"},
+    "raw.githubusercontent.com": {"/docker-library/official-images/master/library/" + name for name in ("fluentd", "nginx", "busybox", "alpine", "ubuntu", "debian", "python", "node", "redis", "postgres", "mysql", "mongo", "httpd", "rabbitmq", "memcached", "traefik", "golang", "haproxy")},
 }
 
 

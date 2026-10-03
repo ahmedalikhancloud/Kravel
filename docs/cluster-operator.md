@@ -11,6 +11,41 @@ chat or planning. Every execution requires an independent human decision within
 five minutes. Approval permits only the reviewed ordered steps, not subsequent
 model-generated changes.
 
+## Diagnosis, researched recommendations, and validation feedback
+
+**Investigate problems** is diagnosis-only: Karl can read evidence and recommend
+next checks, but it cannot stage a mutation or submit an approval request for that
+button. An explicit request such as `Fix the daemonset named example-daemonset`
+enables approval-gated repair planning instead.
+
+For missing or obsolete image tags, Karl can actively look up published versions,
+digests and Linux architectures in vetted public Docker Hub repositories and read
+approved vendor documentation/official-image tag lists. This costs no API key or
+paid service, but requires internet access and can be rate-limited. It sends only
+public repository/tag/version identifiers, not cluster logs, private registry
+URLs, configuration, credentials or user prompts. Private/arbitrary repositories
+are not queried. Availability is not proof of compatibility or security: Karl
+must preserve the component's purpose, explain migration risks, and include
+rollout/readiness checks in the exact reviewed plan. It should ask you for missing
+application requirements only after research cannot establish a suitable choice.
+
+For image-only repairs, `draft_image_update` generates a minimal named `set image`
+operation and bounded rollout/readiness check from researched evidence. It reads
+the actual container and does not regenerate YAML, placement or tolerations.
+Broader changes still use the general command-and-file planner.
+
+Minimal named patches are preferred for one-field repairs. A server dry-run checks
+API schema/admission; it does **not** pull the image or test application startup.
+If validation rejects a plan, its card keeps the failing step and Kubernetes
+diagnostics visible. No review is created and no change is applied. The failed
+validation and rejection are also recorded in MLflow. Ask Karl to revise the
+invalid plan; do not approve an older guessed image recommendation.
+
+A missing previous log is an evidence gap, not an app exception or proof of a
+crash. If delivery times out, check the separate approval inbox before retrying:
+a lost response may conceal an already-created review request. Karl never retries
+approval submission or execution automatically.
+
 ## Upgrade without resetting the cluster
 
 Run from the repository folder in Git Bash:

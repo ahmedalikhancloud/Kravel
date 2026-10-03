@@ -10,6 +10,8 @@ from kravel.config import KubeConfig
 from kravel.store import AuditStore
 from kravel.model_routing import select_model
 from kravel.guardrails import guard_request_scope
+from kravel.cluster_plans import verify_replacement_images, MissingRepairInput, PlanValidationError
+from kravel.model_routing import changes_requested
 
 
 def plan():
@@ -138,6 +140,48 @@ def test_failed_validation_needs_explicit_dependencies_not_silent_success(monkey
     with pytest.raises(ValueError): instance.approve(pending["id"], "human")
 
 
+def test_failed_preview_retains_step_and_diagnostics_without_creating_approval(monkeypatch):
+    instance, runner = broker(monkeypatch); runner.fail_preview = True
+    with pytest.raises(PlanValidationError) as error: instance.create_plan(plan(), "kravel-demo")
+    assert error.value.details["validation"] == "failed" and error.value.details["step"] == 1
+    assert error.value.details["output"]["stderr"] == "denied"
+    assert instance.store.proposals() == []
+    assert all("--dry-run=server" in a or a[0] == "get" or "--help" in a for a, _ in runner.calls)
+    error = PlanValidationError({"step": 1}, {"stderr": 'Invalid value: "map[' + 'large-patch ' * 300 + ']": cannot restore slice from map'})
+    assert str(error).endswith("cannot restore slice from map") and "large-patch" not in str(error)
+
+
+@pytest.mark.parametrize("question", ["Investigate problems", "Inspect the cluster; do not request approval", "Read-only: explain how to fix a pod", "Investigate failures; no changes"])
+def test_diagnosis_does_not_authorize_staging_changes(question):
+    assert changes_requested(question) is False
+
+
+@pytest.mark.parametrize("question", ["Fix the dameonset with the name example-daemonset", "Create a deployment", "Request human approval", "Update the ConfigMap"])
+def test_explicit_change_intent_including_daemonset_typo(question):
+    assert changes_requested(question) is True
+
+
+@pytest.mark.parametrize("operation", ["manifest", "set", "patch", "jsonpatch"])
+def test_existing_daemonset_images_need_actual_support_not_model_guess(operation):
+    old = {"kind": "DaemonSet", "metadata": {"name": "example-daemonset", "namespace": "kravel-demo"}, "spec": {"template": {"spec": {"containers": [{"name": "fluentd", "image": "fluentd:broken"}]}}}}
+    evidence = [{"status": "observed", "body": {"items": [old]}}]
+    value = {"files": {}, "steps": []}
+    if operation == "manifest":
+        import yaml
+        old["spec"]["template"]["spec"]["containers"][0]["image"] = "fluentd:guessed"
+        value["files"] = {"ds.yaml": yaml.safe_dump(old)}
+        old["spec"]["template"]["spec"]["containers"][0]["image"] = "fluentd:broken"
+    else:
+        patch = {"spec": {"template": {"spec": {"containers": [{"name": "fluentd", "image": "fluentd:guessed"}]}}}} if operation == "patch" else [{"op": "replace", "path": "/spec/template/spec/containers/0/image", "value": "fluentd:guessed"}]
+        argv = ["set", "image", "ds/example-daemonset", "fluentd=fluentd:guessed"] if operation == "set" else ["patch", "daemonset", "example-daemonset", "-p", json.dumps(patch)]
+        value["steps"] = [{"argv": argv}]
+    with pytest.raises(MissingRepairInput, match="verified replacement image"):
+        verify_replacement_images(value, evidence, "Fix the dameonset with the name example-daemonset", "kravel-demo")
+    verify_replacement_images(value, evidence, "Use fluentd:guessed as my tested replacement", "kravel-demo")
+    with pytest.raises(MissingRepairInput):
+        verify_replacement_images(value, evidence, "Use fluentd:guessed-but-different", "kravel-demo")
+
+
 def test_operator_enablement_and_expiry(monkeypatch):
     instance, runner = broker(monkeypatch); instance.config.cluster_operator_mode = "disabled"
     with pytest.raises(ValueError): instance.create_plan(plan(), "kravel-demo")
@@ -154,6 +198,10 @@ def test_captured_target_changes_stop_all_writes(monkeypatch):
     instance._execute(instance.approve(pending["id"], "human"))
     assert instance.store.proposal(pending["id"])["status"] == "failed"
     assert all(a[0] == "get" or "--help" in a or "--dry-run=server" in a for a, _ in runner.calls)
+
+
+def test_minimal_image_setter_captures_named_target_for_stale_review_protection():
+    assert KubectlExecutor.target_query(["set", "image", "daemonset/example-daemonset", "fluentd=fluentd:pinned", "-n", "kravel-demo"]) == ["get", "daemonset/example-daemonset", "-n", "kravel-demo", "--ignore-not-found", "-o", "json"]
 
 
 def test_cluster_admin_binding_only_grants_executor_not_worker():
@@ -198,3 +246,13 @@ def test_local_model_routing_without_cloud_or_parallel_agents():
 @pytest.mark.parametrize("question", ["Create a CronJob", "Scale the StatefulSet", "Drain the Kubernetes node", "Configure a NetworkPolicy", "Create a PVC"])
 def test_general_operations_are_in_preflight_scope(question):
     assert guard_request_scope(question)["decision"] == "allow"
+
+
+@pytest.mark.parametrize("kind", ["daemonset", "deployment", "statefulset", "pod"])
+def test_image_update_helper_preserves_other_fields_by_not_regenerating_yaml(kind):
+    from kravel.cluster_plans import image_update_plan
+    draft = image_update_plan({"kind":kind,"name":"logging","container":"app","image":"fluentd:v1.19.3-debian-1.0","rationale":"Published version; compatibility requires approved checks"}, "kravel-demo")
+    assert draft["plan"]["files"] == {}
+    assert draft["plan"]["steps"][0]["argv"] == ["set","image",kind+"/logging","app=fluentd:v1.19.3-debian-1.0","-n","kravel-demo"]
+    assert draft["plan"]["steps"][1]["argv"][0] == ("wait" if kind == "pod" else "rollout")
+    assert "--timeout=90s" in draft["plan"]["steps"][1]["argv"]

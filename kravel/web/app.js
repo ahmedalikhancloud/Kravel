@@ -7,7 +7,7 @@ import { renderClusterPlans, validationLabel, readableReport } from "./plans.mjs
 
 const $ = (selector) => document.querySelector(selector);
 const elements = Object.fromEntries([...document.querySelectorAll("[id]")].map((element) => [element.id, element]));
-const state = {cluster: null, selected: null, namespaceTool: false, activeTool: "get_resource", proposals: [], runs: [], session: null, currentRun: null, runId: null, runSignature: "", kind: "all", busy: false, refreshing: false, pendingFixes: new Set(), readVersion: 0};
+const state = {cluster: null, selected: null, namespaceTool: false, activeTool: "get_resource", proposals: [], runs: [], session: null, currentRun: null, runId: null, runSignature: "", kind: "all", busy: false, refreshing: false, pendingFixes: new Set(), planSubmissions: new Map(), readVersion: 0};
 let evaluationRunId = "", evaluationBusy = false, evaluationTimer = null, evaluationSignature = "";
 let evaluationJobs = [], selectedEvaluationId = "", insightCatalog = null, insightLoading = false;
 const evaluationLoads = new Set(), pendingEvaluationRuns = new Set();
@@ -89,7 +89,7 @@ function apiPath(path, params = {}) { const query = new URLSearchParams(Object.e
 async function api(path, options = {}) {
   const response = await fetch(path, {...options, headers: {"Content-Type": "application/json", ...options.headers}});
   const payload = await response.json().catch(() => ({error: `HTTP ${response.status}`}));
-  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`); return payload;
+  if (!response.ok) { const error = new Error(payload.error || `HTTP ${response.status}`); error.details = payload; error.status = response.status; throw error; } return payload;
 }
 let toastTimer;
 function toast(message) { elements.toast.textContent = message; elements.toast.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => elements.toast.classList.remove("show"), 3400); }
@@ -273,7 +273,7 @@ function renderInvestigation(run) {
   if (evaluationRunId !== run.id) { evaluationRunId = run.id; evaluationSignature = ""; evaluationJobs = []; selectedEvaluationId = ""; elements.evaluationResults.replaceChildren(); elements.evaluationSkipped.replaceChildren(); elements.evaluationSkippedGroup.hidden = true; elements.evaluationLinks.replaceChildren(); elements.evaluationLinks.hidden = true; elements.evaluationHistoryControl.hidden = true; elements.evaluationStatus.textContent = "No evaluation yet. No extra model calls happen until you click."; elements.evaluationFacts.value = ""; elements.evaluationReference.value = ""; updateEvaluationButtons(); if (elements.evaluationPanel.open) loadEvaluation(); }
   renderInsightContext();
   elements.investigateAll.disabled = state.busy;
-  const signature = JSON.stringify(run); if (signature === state.runSignature) return; state.runSignature = signature;
+  const signature = JSON.stringify([run, [...state.planSubmissions]]); if (signature === state.runSignature) return; state.runSignature = signature;
   const payload = run.payload || {}, evidence = payload.evidence || [], findings = payload.findings || [];
   elements.investigationTitle.textContent = payload.responseKind === "learning_explanation" ? "Learn with Karl" : ["scope_help", "request_blocked"].includes(payload.responseKind) ? "Karl’s request check" : "Karl’s investigation";
   elements.requestDecision.hidden = !payload.requestPolicy;
@@ -306,8 +306,8 @@ function renderInvestigation(run) {
     elements.runReport.append(review);
   }
   renderRunbookContext(elements.runbookContext, payload);
-  renderDraftRepairs(elements.draftRepairs, run, createDraftProposal);
-  renderClusterPlans(elements.draftRepairs, run, api, createDraftProposal);
+  renderDraftRepairs(elements.draftRepairs, run, createDraftProposal, state.planSubmissions);
+  renderClusterPlans(elements.draftRepairs, run, api, createDraftProposal, state.planSubmissions);
   if (payload.modelRouting) elements.runReport.append(node("p", "model-route-note", `${payload.modelRouting.thinking ? "✦ Thinking planner" : "ϟ Fast investigator"} · ${payload.modelRouting.model} · ${payload.modelRouting.reason}. Guardrails use the fast local model.`));
   if (payload.timings) { const metrics = node("div", "metrics"); for (const [label, key] of [["Total", "totalMs"], ["Qwen", "modelMs"], ["Reads", "toolMs"], ["Retrieval", "retrievalMs"], ["Input guard", "inputGuardrailMs"], ["Output guard", "outputGuardrailMs"], ["Trace export", "traceFlushMs"]]) metrics.append(node("span", "", `${label} ${formatDuration(payload.timings[key])}`)); elements.runReport.append(metrics); }
   const open = new Set([...elements.runEvidence.querySelectorAll("details[open]")].map((el) => el.dataset.evidenceId));
@@ -446,7 +446,8 @@ async function createDraftProposal(runId, draftId) {
     const proposal = await api("/v1/proposals", {method: "POST", body: JSON.stringify({runId, ...(draftId.startsWith("plan-") ? {planId: draftId} : {draftId}), namespace: namespace()})});
     toast(`${validationLabel(proposal)}. Separate human approval is required.`);
     await loadProposals(); closeRail(); elements.approvals.scrollIntoView({behavior: "smooth", block: "start"});
-  } catch (error) { toast(`Draft not submitted: ${error.message}`); }
+    return proposal;
+  } catch (error) { toast("Plan not submitted. The validation details are shown on its card."); throw error; }
 }
 function renderProposals() {
   elements.approvals.hidden = !state.proposals.length;

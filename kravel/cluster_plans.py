@@ -49,8 +49,126 @@ def _visible(value, label):
 
 def _filename(value):
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,100}", value) or value in {".", "..", "kubeconfig"}:
-        raise ValueError("Generated file names must be flat relative names, never host paths")
+        raise ValueError("Generated file names must be flat relative names, never host paths. Use 'settings.yaml', not 'manifests/settings.yaml'; use that same name in files and argv. Resubmit the complete corrected draft_cluster_plan, not an error JSON answer.")
     return value
+
+
+class PlanValidationError(ValueError):
+    def __init__(self, row, result):
+        diagnostic = safe_output(result.get("stderr") or result.get("stdout") or "Kubernetes rejected the change")
+        # Kubernetes sometimes prints an entire rejected patch before the cause.
+        # Keep that bounded output in the trace/details, not in the headline.
+        reason = diagnostic.strip().splitlines()[-1]
+        if len(reason) > 650:
+            reason = reason.rsplit('\": ', 1)[-1]
+            if len(reason) > 650: reason = "…" + reason[-650:]
+        self.details = {**row, "validation": "failed", "output": {**result, "stderr": diagnostic}, "note": "Validation failed. No approval request was created and no change was applied."}
+        super().__init__(f"Step {row['step']} failed Kubernetes server dry-run: {reason}")
+
+
+class MissingRepairInput(ValueError):
+    pass
+
+
+def image_update_plan(args, namespace):
+    """A minimal reviewed image change, never regenerated placement or code."""
+    if not isinstance(args, dict) or set(args) - {"kind", "name", "container", "image", "rationale", "namespace"} or not {"kind", "name", "container", "image", "rationale"}.issubset(args):
+        raise ValueError("Image update requires kind, name, container, verified image and rationale")
+    if args["kind"] not in {"deployment", "daemonset", "statefulset", "pod"}:
+        raise ValueError("Use deployment, daemonset, statefulset or pod for a minimal image update")
+    ns = args.get("namespace") or namespace
+    for value, label, limit in ((args["name"], "name", 253), (args["container"], "container", 63), (ns, "namespace", 63)):
+        if not isinstance(value, str) or len(value) > limit or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", value): raise ValueError(f"Image update {label} must be a literal Kubernetes name")
+    image = _visible(args["image"], "replacement image")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./:@-]{0,255}", image): raise ValueError("Use one exact image reference, not shell syntax or a URL")
+    rationale = _visible(args["rationale"], "image update rationale")
+    target = args["kind"] + "/" + args["name"]
+    check = ["wait", "--for=condition=Ready", target] if args["kind"] == "pod" else ["rollout", "status", target]
+    return canonical_plan({"title": "Update image · " + target, "summary": rationale + " Only the named container image changes; placement, configuration and other fields are preserved. Published metadata is not proof of runtime compatibility. Approved rollout/readiness checks must confirm the result.", "files": {}, "steps": [{"label": "Update only the container image", "argv": ["set", "image", target, args["container"] + "=" + image, "-n", ns]}, {"label": "Verify rollout/readiness", "argv": [*check, "--timeout=90s", "-n", ns]}]}, namespace)
+
+
+def verify_replacement_images(plan, evidence, question, namespace):
+    """An existing workload is not a blank canvas for guessed replacement tags.
+
+    Operator-supplied exact references and fetched documentation can support a
+    proposal; a current broken tag, runbook example, or model assertion cannot.
+    This does NOT claim registry availability or application compatibility.
+    """
+    observed = {}
+    references = []
+    verified_images = set()
+    from .image_research import normalize_reference
+    aliases = {"deployment": "Deployment", "deployments": "Deployment", "deploy": "Deployment", "daemonset": "DaemonSet", "daemonsets": "DaemonSet", "ds": "DaemonSet", "statefulset": "StatefulSet", "statefulsets": "StatefulSet", "sts": "StatefulSet", "pod": "Pod", "pods": "Pod"}
+    collection_kinds = {"Container states & readiness": "Pod", "Rollout generations & conditions": "Deployment", "Per-node workload ownership & rollout": "DaemonSet", "Stateful workload revisions": "StatefulSet"}
+    def walk(value, inherited=""):
+        if isinstance(value, list):
+            for item in value: walk(item, inherited)
+        elif isinstance(value, dict):
+            kind = value.get("kind") or inherited
+            if kind in set(aliases.values()) and value.get("metadata", {}).get("name"):
+                meta = value["metadata"]
+                observed[(kind, meta.get("namespace") or namespace, meta["name"])] = value
+            for key, item in value.items(): walk(item, kind.removesuffix("List") if key == "items" else "")
+    for item in evidence:
+        if item.get("status") != "observed": continue
+        body = item.get("body", {})
+        if item.get("sourceType", "live") == "live":
+            walk(body, collection_kinds.get(item.get("label"), ""))
+            if isinstance(body, dict) and body.get("guardedExcerpt"):
+                try: walk(json.loads(body["guardedExcerpt"]))
+                except ValueError: pass
+        elif item.get("label") in {"Focused read · search_image_tags", "Focused read · inspect_image_tag", "Published image candidates"}:
+            try: registry = json.loads(body["guardedExcerpt"]) if body.get("guardedExcerpt") else body
+            except (ValueError, TypeError): continue
+            if registry.get("status") != "verified": continue
+            for candidate in registry.get("candidates", []) + ([registry["candidate"]] if isinstance(registry.get("candidate"), dict) else []):
+                if candidate.get("verified") is True:
+                    verified_images.update(normalize_reference(candidate[key]) for key in ("reference", "digestReference") if candidate.get(key))
+        elif item.get("label") == "Focused read · fetch_reference":
+            references.append(stable_json(body))
+    support = question + "\n" + "\n".join(references)
+    def check(kind, name, ns, proposed):
+        old = observed.get((kind, ns, name))
+        if not old: return
+        spec = old.get("spec", {})
+        pod_spec = spec if kind == "Pod" else spec.get("template", {}).get("spec", {})
+        prior = {c.get("image") for key in ("containers", "initContainers") for c in pod_spec.get(key, [])}
+        for image in proposed:
+            if image in prior or normalize_reference(image) in verified_images or re.search(r"(?<![\w./:-])" + re.escape(image) + r"(?![\w./:-])", support): continue
+            raise MissingRepairInput(f"I need a verified replacement image for {kind}/{name}. The proposed '{image}' is not established by your request, public registry research or fetched documentation. Use search_image_tags/inspect_image_tag and vendor documentation to find a suitable published version, then resubmit a minimal plan. Ask the operator only if application-specific intent remains unknown. No approval request was created and no change was applied.")
+    def images(value):
+        if isinstance(value, list): return [image for item in value for image in images(item)]
+        if not isinstance(value, dict): return []
+        return [v for k, v in value.items() if k == "image" and isinstance(v, str)] + [image for k, v in value.items() if k != "image" for image in images(v)]
+    for source in plan["files"].values():
+        try:
+            for obj in yaml.safe_load_all(source):
+                if not isinstance(obj, dict): continue
+                for manifest in obj.get("items", []) if obj.get("kind") == "List" else [obj]:
+                    if isinstance(manifest, dict):
+                        meta = manifest.get("metadata", {})
+                        check(manifest.get("kind"), meta.get("name"), meta.get("namespace") or namespace, images(manifest.get("spec", {})))
+        except yaml.YAMLError:
+            continue  # Application code files are not Kubernetes manifests.
+    for step in plan["steps"]:
+        argv = step["argv"]
+        ns = namespace
+        for i, arg in enumerate(argv):
+            if arg in {"-n", "--namespace"} and i + 1 < len(argv): ns = argv[i + 1]
+            elif arg.startswith("--namespace="): ns = arg.split("=", 1)[1]
+        offset = 2 if argv[:2] == ["set", "image"] else 1 if argv[0] == "patch" else None
+        if offset is None or len(argv) <= offset: continue
+        target = argv[offset].split("/", 1)
+        kind, name = aliases.get(target[0]), target[1] if len(target) > 1 else argv[offset + 1] if len(argv) > offset + 1 else ""
+        if offset == 2:
+            proposed = [arg.split("=", 1)[1] for arg in argv[offset + 1:] if not arg.startswith("-") and "=" in arg]
+        else:
+            payload = next((arg.split("=", 1)[1] if "=" in arg else argv[i + 1] if i + 1 < len(argv) else "{}" for i, arg in enumerate(argv) if arg.split("=", 1)[0] in {"-p", "--patch"}), "{}")
+            try:
+                patch = json.loads(payload)
+                proposed = images(patch) + [op["value"] for op in patch if isinstance(op, dict) and op.get("path", "").endswith("/image") and isinstance(op.get("value"), str)] if isinstance(patch, list) else images(patch)
+            except ValueError: continue
+        check(kind, name, ns, proposed)
 
 
 def validate_argv(argv, files=None, *, read_only=False):
@@ -228,9 +346,9 @@ class KubectlExecutor:
                 file = arg.split("=", 1)[1] if "=" in arg else argv[index+1]
                 query = ["get", "-f", file]
                 break
-        if query is None and argv[0] in {"patch", "scale", "delete", "label", "annotate"}:
+        if query is None and (argv[0] in {"patch", "scale", "delete", "label", "annotate"} or argv[:2] in (["set", "image"], ["set", "resources"], ["set", "env"], ["rollout", "restart"], ["rollout", "undo"])):
             operands = []
-            for arg in argv[1:]:
+            for arg in argv[2:] if argv[0] in {"set", "rollout"} else argv[1:]:
                 if arg.startswith("-") or "=" in arg: break
                 operands.append(arg)
             if operands and not any(a in {"all", "--all"} for a in argv) and not any(a.startswith(("-l", "--selector", "--field-selector")) for a in argv):
@@ -276,7 +394,7 @@ class KubectlExecutor:
             elif self.supports_dry_run(argv):
                 result = self.run([*argv, "--dry-run=server"], draft["plan"]["files"], draft["namespace"])
                 if result["exitCode"] and not step["dependsOn"]:
-                    raise ValueError(f"Step {index} failed Kubernetes server dry-run: {result['stderr']}")
+                    raise PlanValidationError(row, result)
                 row.update(validation="deferred" if result["exitCode"] else "passed", output=result, note="Must pass server dry-run after preceding dependencies execute." if result["exitCode"] else "Kubernetes server dry-run passed; no change persisted.")
             else:
                 row.update(validation="not_available", note="This command has no supported server dry-run. It has NOT been executed. Approval explicitly accepts this risk.")
@@ -314,5 +432,6 @@ class KubectlExecutor:
 
 CLUSTER_TOOLS = [
     {"type": "function", "function": {"name": "kubectl_read", "description": "Read arbitrary kinds, CRDs or namespaces with built-in kubectl get/logs/top/explain/api-resources/api-versions/version. argv excludes kubectl. get always returns redacted JSON; no secrets, raw endpoints, host files or templates. Never execs or mutates.", "parameters": {"type": "object", "properties": {"argv": {"type": "array", "items": {"type": "string"}}}, "required": ["argv"]}}},
+    {"type": "function", "function": {"name": "draft_image_update", "description": "PREFERRED for an existing workload's missing/wrong image tag. Given a researched exact image, generate a minimal set-image + bounded rollout/readiness plan. Reads the actual named container, verifies replacement provenance and preserves ALL placement, selectors, tolerations, config and other fields. No YAML regeneration, no writes or approval. Use a published candidate already supplied in evidence, not guessed tags. Returned planId is staged for separate human review.", "parameters": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["deployment", "daemonset", "statefulset", "pod"]}, "name": {"type": "string"}, "container": {"type": "string"}, "image": {"type": "string"}, "rationale": {"type": "string"}, "namespace": {"type": "string"}}, "required": ["kind", "name", "container", "image", "rationale"]}}},
     {"type": "function", "function": {"name": "draft_cluster_plan", "description": "Generate a complete general Kubernetes operation plan: arbitrary kinds/namespaces/CRDs/RBAC/storage, YAML and application code files, ordered kubectl argv commands, then verification commands. Nothing executes. Existing-resource changes need live inspection. New resource names may be proposed, not claimed observed. No credentials in files. dependsOn contains 1-based preceding step numbers when new namespaces/CRDs/resources are prerequisites. Files are flat relative names; -f must reference one of them. Explicit exec payload uses --. Request human approval with the returned planId.", "parameters": {"type": "object", "properties": {"title": {"type": "string"}, "summary": {"type": "string"}, "files": {"type": "object", "additionalProperties": {"type": "string"}}, "steps": {"type": "array", "items": {"type": "object", "properties": {"label": {"type": "string"}, "argv": {"type": "array", "items": {"type": "string"}}, "dependsOn": {"type": "array", "items": {"type": "integer"}}}, "required": ["label", "argv"]}}}, "required": ["title", "summary", "files", "steps"]}}},
 ]
