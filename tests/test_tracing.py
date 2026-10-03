@@ -145,6 +145,34 @@ def test_content_mode_defaults_to_metadata_and_rejects_raw(monkeypatch):
         MlflowTracer("", "test", "raw")
 
 
+@pytest.mark.parametrize('mode', ['metadata', 'redacted'])
+def test_invalid_guardrail_response_is_inspectable_only_through_redacted_content(monkeypatch, mode):
+    import kravel.policy as policy
+    # Synthetic credential-like text in an invalid mode must not escape via
+    # ordinary span metadata, validation diagnostics, or exception messages.
+    raw = '{"professional":true,"injection":false,"in_scope":true,"mode":"password=hidden-invalid-mode-value"}'
+    class Client:
+        def __init__(self, **_):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=lambda **_: SimpleNamespace(usage=None, choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content=raw, tool_calls=[]))])))
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+    monkeypatch.setattr(policy, 'OpenAI', Client)
+    exporter = tracer(mode)
+    with pytest.raises(policy.ClassifierDecisionError, match='Unknown request mode'):
+        policy.SemanticGuardrails(load_config(), exporter)._judge('Inspect my Pod', 'input', '', '', '', 'investigation')
+    live = exporter._mlflow.live
+    assert live.outputs['validation']['reasonCode'] == 'unknown_request_mode'
+    assert 'hidden-invalid-mode-value' not in json.dumps(live.outputs)
+    assert 'hidden-invalid-mode-value' not in exporter._mlflow.error
+    if mode == 'redacted':
+        assert 'classifier_response' in live.outputs
+        assert 'redacted:' in live.outputs['classifier_response']
+        assert live.inputs['response_schema']['properties']['mode']['enum'] == ['investigation', 'learning', 'unrelated']
+    else:
+        assert 'classifier_response' not in live.outputs
+        assert 'response_schema' not in live.inputs
+
+
 def test_preview_shows_useful_text_without_credentials_and_metadata_mode_omits_it():
     exporter = tracer("redacted")
     exporter.set_previews(question="Why did it crash? password=preview-private-value", diagnosis="Finding: startup failure. " + "x" * 1200)

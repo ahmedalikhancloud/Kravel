@@ -15,9 +15,13 @@ Policy prompts and typed decision handling live in `kravel/policy.py`; fast sani
 
 ## Fail-closed behavior and timing
 
-Required semantic checks block on missing NeMo, timeout (30 seconds, no model retry), invalid/extra fields, non-Boolean flags, unknown modes, unfinished/tool-bearing classifier responses, missing action execution, or a rail result other than `PASSED`. No automatic “regex-only fallback” exists. Decisions are not cached between checks. Local greetings and obvious preflight rejection need no classifier.
+All three classifier phases request schema-constrained JSON (`response_format: json_schema`, `strict: true`): exact Boolean fields, no extra properties, and an input `mode` enum of `investigation`, `learning`, or `unrelated`. This is verified with the local Docker Model Runner/llama.cpp backend; a different endpoint must support that format. Kravel still independently validates the returned JSON, duplicate fields, exact types, and enum. Constrained decoding prevents invalid shapes, not incorrect policy judgments. Rejection uses the Boolean safety flags, never a made-up mode such as `injection` or `blocked`. Profane/sexualized requested resource names are not exempt from the professional-language policy.
 
-The local model is reused to avoid another large memory footprint. This is **LLM-as-judge**, not an independent safety-trained detector. Expect additional short model calls: input, collected evidence, output, and each optional focused tool result. MLflow exposes each check's decision/flags/reason/version and latency under `guardrail.<phase>.semantic`, with a nested `guardrail.<phase>.classifier` containing sanitized policy inputs and token counts. Diagnostic inference remains `qwen.inference`. Aggregate input/output guardrail latency includes these checks; diagnostic model timing excludes classifier calls. Model-classifier time is not zero just because diagnostic inference was skipped.
+Required semantic checks block on missing NeMo, timeout (30 seconds, no model retry), unsupported response format, invalid/extra fields, non-Boolean flags, unknown modes, unfinished/refused/tool-bearing classifier responses, missing action execution, or a rail result other than `PASSED`. Invalid decisions have reason code `guardrail_invalid_decision` and a stable `validationCode`; transport/framework failures remain `guardrail_unavailable`. No automatic “regex-only fallback,” mode coercion, or unconstrained retry exists. Decisions are not cached between checks. Local greetings and obvious preflight rejection need no classifier.
+
+The local model is reused to avoid another large memory footprint. This is **LLM-as-judge**, not an independent safety-trained detector. Expect additional short model calls: input, collected evidence, output, and each optional focused tool result. MLflow exposes each check's decision/flags/reason/version and latency under `guardrail.<phase>.semantic`, with a nested `guardrail.<phase>.classifier` containing sanitized policy inputs, response schema, classifier response **even when validation fails**, finish reason, token counts, and validation status/code. Content is captured only in `redacted` mode; `metadata` mode omits policy/question/response text. Diagnostic inference remains `qwen.inference`. Aggregate input/output guardrail latency includes these checks; diagnostic model timing excludes classifier calls. Model-classifier time is not zero just because diagnostic inference was skipped.
+
+If an older trace shows **Unknown request mode**, it means the classifier returned a value outside the three allowed modes, not that MLflow failed. Older versions recorded only the exception, not that invalid response; existing traces cannot be backfilled. In new traces, open the classifier's **Outputs → classifier_response** and **validation** to see what was returned and why it passed or failed. A valid policy rejection (for example professional language) is distinct from a malformed classifier decision; neither permits diagnostic tools or changes.
 
 ## Tests and demo cases
 
@@ -26,6 +30,8 @@ Run from Git Bash:
 ```bash
 python -m pytest
 node --test tests/demo.test.mjs tests/topology.test.mjs
+# Optional: verify the actual downloaded local Qwen classifier (no cluster tools).
+KRAVEL_LIVE_POLICY_TEST=1 python -m pytest tests/test_live_policy.py
 ```
 
 Tests include real NeMo flow enforcement with mocked classifier inference, the reported phrase and obfuscations, output/evidence rejection, unavailable guards, strict JSON parsing, forbidden tool/namespace actions, fixed lab scenarios, session-bound single-use confirmation, stale/expired previews, partial failure, and separate RBAC/credentials. They are regression tests, not a measured enterprise attack-resistance score.

@@ -8,7 +8,7 @@ from kravel.config import load_config
 from kravel.evidence import Progress
 from kravel.guardrails import guard_model_input, guard_request_scope
 from kravel.store import AuditStore
-from kravel.policy import SemanticGuardrails
+from kravel.policy import SemanticGuardrails, ClassifierDecisionError
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +112,29 @@ def test_learning_reaches_qwen_but_never_collects_cluster_evidence(monkeypatch):
     assert 'guardrail.output' in tracer.spans and 'qwen.inference' in tracer.spans
     assert tracer.spans['guardrail.relevance']['model_skipped'] is False
     assert tracer.spans['guardrail.relevance']['cluster_reads_skipped'] is True
+
+
+def test_invalid_classifier_mode_stops_without_diagnosis_reads_or_approval(monkeypatch):
+    tracer = Tracer()
+    def invalid(**_):
+        raise ClassifierDecisionError('unknown_request_mode', 'Unknown request mode')
+    def forbidden(*_, **__):
+        raise AssertionError('Invalid guardrail decisions must not reach models, reads, plans or approval')
+    monkeypatch.setattr(SemanticGuardrails, '_judge', lambda self, **kwargs: invalid(**kwargs))
+    monkeypatch.setattr(debugger, 'MlflowTracer', lambda *_: tracer)
+    monkeypatch.setattr(debugger, 'OpenAI', forbidden)
+    monkeypatch.setattr(debugger, 'collect_evidence', forbidden)
+    monkeypatch.setattr(debugger, 'execute_read_tool', forbidden)
+    monkeypatch.setattr(debugger, 'request_approval', forbidden)
+    store = AuditStore()
+    store.start_workflow('invalid-mode', 'investigation', 'kravel-demo')
+    result = debugger.run_debugger(object(), store, load_config(), 'Inspect my Pod', 'kravel-demo', run_id='invalid-mode', progress=Progress(store, 'invalid-mode'))
+    assert result['disposition'] == 'blocked' and result['diagnosticModelInvoked'] is False
+    assert result['clusterReadsPerformed'] is False and result['mutationExecuted'] is False
+    assert result['requestPolicy']['reasonCode'] == 'guardrail_invalid_decision'
+    assert result['requestPolicy']['flags']['validationCode'] == 'unknown_request_mode'
+    assert result['tools'] == result['suggestedFixes'] == []
+    assert 'qwen.inference' not in tracer.spans
 
 
 def test_output_rejection_withholds_answer_and_reports_actual_inference(monkeypatch):
