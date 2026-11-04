@@ -9,7 +9,7 @@ description = "LangGraph Kubernetes operator with independent human-approved exe
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 dependencies = [
-  "langgraph==1.2.12",
+  "langgraph==1.2.14",
   "mlflow-tracing==3.16.0",
   "openai==3.22.1",
   "nemoguardrails==0.24.1",
